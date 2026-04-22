@@ -266,6 +266,8 @@ export interface AppSettings {
   logoUrl?: string;
   defaultCommissionRate: number;
   defaultVatRate: number;
+  clientCategories?: string;
+  productCategories?: string;
   currency: string;
   createdAt: string;
   updatedAt: string;

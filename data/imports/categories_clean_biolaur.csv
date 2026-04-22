@@ -1,0 +1,60 @@
+name,slug,parent_slug
+CORPOREL,corporel,
+CUISINE,cuisine,
+DEBOUCHEURS,deboucheurs,
+DROGUERIE,droguerie,
+GAMME NILODOR,gamme-nilodor,
+GEL DOUCHE,gel-douche,
+LINGE,linge,
+SAC A DECHET NETTOYANT POUBELLES,sac-a-dechet-nettoyant-poubelles,
+SANITAIRES,sanitaires,
+SHAMPOING,shampoing,
+SOLS & SURFACES,sols-surfaces,
+,none,corporel
+Désinfectants Surfaces,desinfectants-surfaces,cuisine
+Détartrant Machine,detartrant-machine,cuisine
+"Four, Plancha, Plaque",four-plancha-plaque,cuisine
+Liquide Lavage Machine,liquide-lavage-machine,cuisine
+Liquide Rinçage Machine,liquide-rincage-machine,cuisine
+Liquide vaisselle mains,liquide-vaisselle-mains,cuisine
+Rénovateur Métaux,renovateur-metaux,cuisine
+Surfaces,surfaces,cuisine
+Traitement Canalisations / Bac à graisse,traitement-canalisations-bac-a-graisse,cuisine
+Liquide,liquide,deboucheurs
+Solide,solide,deboucheurs
+Balances,balances,droguerie
+Diluants,diluants,droguerie
+Entretien,entretien,droguerie
+Huiles,huiles,droguerie
+Insectes Rampants,insectes-rampants,droguerie
+Insectes Volants,insectes-volants,droguerie
+Insectes Volants et Rampants,insectes-volants-et-rampants,droguerie
+Javels,javels,droguerie
+Minuteurs / Horloges,minuteurs-horloges,droguerie
+Rongeurs,rongeurs,droguerie
+Themomètres,themometres,droguerie
+Absorbants NILODOR,absorbants-nilodor,gamme-nilodor
+Neutralisants et destructeurs d'odeurs,neutralisants-et-destructeurs-d-odeurs,gamme-nilodor
+"Poubelles Locaux, Parking neutralisation très longue durée et grands surfaces",poubelles-locaux-parking-neutralisation-tres-longue-duree-et-grands-surfaces,gamme-nilodor
+Accordéons,accordeons,linge
+Air Sapin,air-sapin,linge
+Clips,clips,linge
+Détachants,detachants,linge
+Grilles,grilles,linge
+Lessive Liquide,lessive-liquide,linge
+Fosse septique,fosse-septique,sanitaires
+"Nettoyants, Détartrants, Désinfectants",nettoyants-detartrants-desinfectants,sanitaires
+Surfaces et Canalisations,surfaces-et-canalisations,sanitaires
+"Wc, Urinoir",wc-urinoir,sanitaires
+Désinfectants surodorants conteneurs/ poubelles très longue rémanence,desinfectants-surodorants-conteneurs-poubelles-tres-longue-remanence,sols-surfaces
+Désodorisants et surodorants,desodorisants-et-surodorants,sols-surfaces
+Détergents Désinfectants Surodorant 3D,detergents-desinfectants-surodorant-3d,sols-surfaces
+Détergents Désinfectants Surodorant 3D longue durée,detergents-desinfectants-surodorant-3d-longue-duree,sols-surfaces
+Détergents Sols parfumé 2D,detergents-sols-parfume-2d,sols-surfaces
+Détergents Surodorant 2D,detergents-surodorant-2d,sols-surfaces
+Détergents Surodorant 2D ECOCERT,detergents-surodorant-2d-ecocert,sols-surfaces
+Détergents désinfectants de surfaces Multi-usage Neutre,detergents-desinfectants-de-surfaces-multi-usage-neutre,sols-surfaces
+Nettoyants Vitres et surfaces,nettoyants-vitres-et-surfaces,sols-surfaces
+Spécialité: Détachants surfaces Anti Graffiti,specialite-detachants-surfaces-anti-graffiti,sols-surfaces
+Traitement TERRASSE,traitement-terrasse,sols-surfaces
+Traitement TOITURES,traitement-toitures,sols-surfaces
