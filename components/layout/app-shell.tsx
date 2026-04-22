@@ -35,7 +35,21 @@ const navItems = [
   { href: "/settings", label: "Parametres", icon: Settings }
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+type CompanyCard = {
+  companyName: string;
+  companyAddress: string;
+  senderPhone: string;
+  senderEmail: string;
+};
+
+const defaultCompanyCard: CompanyCard = {
+  companyName: "Biolaur Distribution",
+  companyAddress: "12 rue des Artisans\n33000 Bordeaux",
+  senderPhone: "05 56 00 00 00",
+  senderEmail: "commercial@biolaur.fr"
+};
+
+export function AppShell({ children, companyCard = defaultCompanyCard }: { children: React.ReactNode; companyCard?: CompanyCard }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -76,11 +90,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         {nav}
         <div className="absolute bottom-5 left-5 right-5 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-          <p className="text-sm font-semibold text-gray-950">Biolaur Distribution</p>
-          <p className="mt-1 text-xs leading-5 text-gray-500">12 rue des Artisans<br />33000 Bordeaux</p>
+          <p className="text-sm font-semibold text-gray-950">{companyCard.companyName}</p>
+          <p className="mt-1 whitespace-pre-line text-xs leading-5 text-gray-500">{companyCard.companyAddress}</p>
           <div className="mt-3 space-y-1 text-xs font-medium text-gray-600">
-            <p>05 56 00 00 00</p>
-            <p className="truncate">commercial@biolaur.fr</p>
+            <p>{companyCard.senderPhone}</p>
+            <p className="truncate">{companyCard.senderEmail}</p>
           </div>
         </div>
       </aside>
