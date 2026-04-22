@@ -28,3 +28,16 @@ using (
       and pl.active = true
   )
 );
+
+drop policy if exists "catalog public read product documents" on public.product_documents;
+create policy "catalog public read product documents"
+on public.product_documents
+for select
+using (
+  exists (
+    select 1
+    from public.products p
+    where p.id = product_documents.product_id
+      and p.actif = true
+  )
+);

@@ -3,7 +3,7 @@ import { ArrowLeft, Download, Mail, Plus } from "lucide-react";
 import { ProductForm } from "@/components/forms/product-form";
 import { PageHeader } from "@/components/page-header";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { createAdminClient } from "@/supabase/admin";
+import { createServerSupabaseClient } from "@/supabase/admin";
 import type { Product, ProductCategory, ProductDocument } from "@/types/crm";
 
 function toNumber(value: unknown) {
@@ -12,8 +12,12 @@ function toNumber(value: unknown) {
 
 export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const supabase = createAdminClient();
-  const [{ data: productRow }, { data: docsRows }, { data: priceRows }] = await Promise.all([
+  const supabase = createServerSupabaseClient();
+  const [
+    { data: productRow, error: productError },
+    { data: docsRows, error: docsError },
+    { data: priceRows, error: priceError }
+  ] = await Promise.all([
     supabase
       .from("products")
       .select(
@@ -24,6 +28,19 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     supabase.from("product_documents").select("id,product_id,document_type,title,file_name,storage_path,public_url,mime_type,created_at,updated_at").eq("product_id", id),
     supabase.from("price_list_items").select("prix_ht").eq("product_id", id).limit(1)
   ]);
+
+  if (productError) {
+    return (
+      <div className="rounded-2xl border border-red-100 bg-white p-6 shadow-sm">
+        <Link href="/products" className="mb-4 inline-flex items-center gap-2 text-sm text-slate-500 hover:text-leaf">
+          <ArrowLeft className="h-4 w-4" />
+          Retour catalogue
+        </Link>
+        <h1 className="text-xl font-semibold text-ink">Impossible de charger le produit</h1>
+        <p className="mt-2 text-sm text-slate-500">Le catalogue est disponible, mais la fiche detail n'a pas pu etre lue.</p>
+      </div>
+    );
+  }
 
   if (!productRow) {
     return (
@@ -65,8 +82,8 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     createdAt: product.createdAt,
     updatedAt: product.updatedAt
   };
-  const price = { unitPriceHt: toNumber(priceRows?.[0]?.prix_ht ?? productRow.tarif_ht) };
-  const docs: ProductDocument[] = (docsRows ?? []).map((doc) => ({
+  const price = { unitPriceHt: toNumber(priceError ? productRow.tarif_ht : priceRows?.[0]?.prix_ht ?? productRow.tarif_ht) };
+  const docs: ProductDocument[] = (docsError ? [] : docsRows ?? []).map((doc) => ({
     id: doc.id,
     productId: doc.product_id,
     documentType: doc.document_type,
@@ -78,6 +95,23 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     createdAt: doc.created_at,
     updatedAt: doc.updated_at
   }));
+  const productDocuments: ProductDocument[] =
+    docs.length > 0 || !product.technicalSheetUrl
+      ? docs
+      : [
+          {
+            id: `${product.id}-technical-sheet`,
+            productId: product.id,
+            documentType: "fiche_technique",
+            title: `Fiche technique ${product.reference}`,
+            fileName: "",
+            storagePath: product.technicalSheetUrl,
+            publicUrl: product.technicalSheetUrl,
+            mimeType: "application/pdf",
+            createdAt: product.createdAt,
+            updatedAt: product.updatedAt
+          }
+        ];
 
   return (
     <>
@@ -90,7 +124,13 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         description={`${product.reference} - ${product.packaging}`}
         actions={
           <>
-            <a href={product.technicalSheetUrl || "#"} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
+            <a
+              href={product.technicalSheetUrl || "#"}
+              target={product.technicalSheetUrl ? "_blank" : undefined}
+              rel={product.technicalSheetUrl ? "noreferrer" : undefined}
+              aria-disabled={!product.technicalSheetUrl}
+              className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium"
+            >
               <Download className="h-4 w-4" />
               FT PDF
             </a>
@@ -121,12 +161,16 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         </section>
         <section className="rounded-lg border border-line bg-white p-4">
           <h2 className="mb-3 font-semibold text-ink">Documents produit</h2>
-          {docs.map((doc) => (
-            <a key={doc.id} href={doc.publicUrl} className="mb-2 block rounded-md border border-line p-3 text-sm hover:bg-slate-50">
+          {productDocuments.length === 0 ? (
+            <p className="rounded-md border border-dashed border-line p-3 text-sm text-slate-500">Aucune fiche technique liee a ce produit.</p>
+          ) : (
+            productDocuments.map((doc) => (
+            <a key={doc.id} href={doc.publicUrl} target="_blank" rel="noreferrer" className="mb-2 block rounded-md border border-line p-3 text-sm hover:bg-slate-50">
               {doc.title}
               <span className="block text-xs text-slate-500">{doc.documentType}</span>
             </a>
-          ))}
+            ))
+          )}
         </section>
       </div>
       <section className="mt-6">
