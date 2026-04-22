@@ -2,13 +2,54 @@
 
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/ui/data-table";
-import { priceListItems, priceLists, products } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import type { PriceListItem } from "@/types/crm";
+import type { PriceList, PriceListItem, Product } from "@/types/crm";
 
 export default function PriceListsPage() {
+  const [priceLists, setPriceLists] = useState<PriceList[]>([]);
+  const [priceListItems, setPriceListItems] = useState<PriceListItem[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadPriceLists() {
+      try {
+        setIsLoading(true);
+        const response = await fetch("/api/price-lists", { cache: "no-store" });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger les tarifs.");
+        }
+
+        if (mounted) {
+          setPriceLists(payload.priceLists ?? []);
+          setPriceListItems(payload.priceListItems ?? []);
+          setProducts(payload.products ?? []);
+          setError("");
+        }
+      } catch (loadError) {
+        if (mounted) {
+          setError(loadError instanceof Error ? loadError.message : "Impossible de charger les tarifs.");
+        }
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    }
+
+    loadPriceLists();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   return (
     <>
       <PageHeader
@@ -16,6 +57,9 @@ export default function PriceListsPage() {
         description="Tarif BIOLAUR SP 2026 CORSE exploitable en lignes selectionnables pour commande."
         actions={<button className="focus-ring rounded-md border border-line bg-white px-4 py-2 text-sm font-medium">Importer CSV / Excel</button>}
       />
+      {error ? <div className="mb-4 rounded-xl border border-red-100 bg-red-50 p-4 text-sm font-medium text-red-700">{error}</div> : null}
+      {isLoading ? <div className="rounded-xl border border-line bg-white p-6 text-sm font-medium text-slate-500">Chargement du tarif Supabase...</div> : null}
+      {!isLoading ? (
       <DataTable<PriceListItem>
         rows={priceListItems}
         searchPlaceholder="Rechercher produit, reference, conditionnement..."
@@ -60,6 +104,7 @@ export default function PriceListsPage() {
           }
         ]}
       />
+      ) : null}
     </>
   );
 }

@@ -2,15 +2,82 @@ import Link from "next/link";
 import { ArrowLeft, Download, Mail, Plus } from "lucide-react";
 import { ProductForm } from "@/components/forms/product-form";
 import { PageHeader } from "@/components/page-header";
-import { priceListItems, productCategories, productDocuments, products } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { createAdminClient } from "@/supabase/admin";
+import type { Product, ProductCategory, ProductDocument } from "@/types/crm";
+
+function toNumber(value: unknown) {
+  return Number(value ?? 0);
+}
 
 export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const product = products.find((item) => item.id === id) ?? products[0];
-  const category = productCategories.find((item) => item.id === product.categoryId);
-  const price = priceListItems.find((item) => item.productId === product.id);
-  const docs = productDocuments.filter((doc) => doc.productId === product.id);
+  const supabase = createAdminClient();
+  const [{ data: productRow }, { data: docsRows }, { data: priceRows }] = await Promise.all([
+    supabase
+      .from("products")
+      .select(
+        "id,categorie_id,reference,code_produit,nom_produit,description_courte,gamme,categorie,sous_categorie,conditionnement,unite,ean,tarif_ht,tva,actif,fiche_technique_url,fiche_securite_url,notes,created_at,updated_at"
+      )
+      .eq("id", id)
+      .single(),
+    supabase.from("product_documents").select("id,product_id,document_type,title,file_name,storage_path,public_url,mime_type,created_at,updated_at").eq("product_id", id),
+    supabase.from("price_list_items").select("prix_ht").eq("product_id", id).limit(1)
+  ]);
+
+  if (!productRow) {
+    return (
+      <div className="rounded-xl border border-line bg-white p-6">
+        <Link href="/products" className="mb-4 inline-flex items-center gap-2 text-sm text-slate-500 hover:text-leaf">
+          <ArrowLeft className="h-4 w-4" />
+          Retour catalogue
+        </Link>
+        <h1 className="text-xl font-semibold text-ink">Produit introuvable</h1>
+      </div>
+    );
+  }
+
+  const product: Product = {
+    id: productRow.id,
+    categoryId: productRow.categorie_id ?? "",
+    reference: productRow.reference,
+    code: productRow.code_produit ?? productRow.reference,
+    name: productRow.nom_produit,
+    shortDescription: productRow.description_courte ?? productRow.sous_categorie ?? "",
+    longDescription: [productRow.categorie, productRow.sous_categorie].filter(Boolean).join(" | "),
+    brand: productRow.gamme ?? "",
+    rangeName: productRow.gamme ?? productRow.categorie ?? "",
+    packaging: productRow.conditionnement ?? "",
+    unit: productRow.unite ?? "",
+    ean: productRow.ean ?? "",
+    vatRate: toNumber(productRow.tva),
+    isActive: productRow.actif,
+    technicalSheetUrl: productRow.fiche_technique_url ?? "",
+    safetySheetUrl: productRow.fiche_securite_url ?? undefined,
+    notes: productRow.notes ?? undefined,
+    createdAt: productRow.created_at,
+    updatedAt: productRow.updated_at
+  };
+  const category: ProductCategory = {
+    id: product.categoryId,
+    name: productRow.sous_categorie ?? productRow.categorie ?? "-",
+    slug: "",
+    createdAt: product.createdAt,
+    updatedAt: product.updatedAt
+  };
+  const price = { unitPriceHt: toNumber(priceRows?.[0]?.prix_ht ?? productRow.tarif_ht) };
+  const docs: ProductDocument[] = (docsRows ?? []).map((doc) => ({
+    id: doc.id,
+    productId: doc.product_id,
+    documentType: doc.document_type,
+    title: doc.title,
+    fileName: doc.file_name ?? "",
+    storagePath: doc.storage_path ?? "",
+    publicUrl: doc.public_url ?? "",
+    mimeType: doc.mime_type ?? "",
+    createdAt: doc.created_at,
+    updatedAt: doc.updated_at
+  }));
 
   return (
     <>
@@ -23,7 +90,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
         description={`${product.reference} - ${product.packaging}`}
         actions={
           <>
-            <a href={product.technicalSheetUrl} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
+            <a href={product.technicalSheetUrl || "#"} className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
               <Download className="h-4 w-4" />
               FT PDF
             </a>
@@ -46,7 +113,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
             <Info label="Gamme" value={product.rangeName} />
             <Info label="Marque" value={product.brand} />
             <Info label="EAN" value={product.ean} />
-            <Info label="Prix tarif HT" value={formatCurrency(price?.unitPriceHt ?? 0)} />
+            <Info label="Prix tarif HT" value={formatCurrency(price.unitPriceHt)} />
             <Info label="TVA" value={`${product.vatRate}%`} />
             <Info label="Cree le" value={formatDate(product.createdAt)} />
             <Info label="Mis a jour" value={formatDate(product.updatedAt)} />

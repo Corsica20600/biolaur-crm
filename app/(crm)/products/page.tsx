@@ -2,21 +2,63 @@
 
 import Link from "next/link";
 import { Download, Mail, MoreHorizontal, Package, Plus, Search, ShoppingCart } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ActionIconButton } from "@/components/ui/action-icon-button";
 import { CategoryBadge } from "@/components/ui/category-badge";
 import { Pagination } from "@/components/ui/pagination";
-import { priceListItems, productCategories, products } from "@/lib/demo-data";
 import { formatCurrency, normalizeSearch } from "@/lib/utils";
+import type { PriceListItem, Product, ProductCategory } from "@/types/crm";
 
-function categoryLabel(categoryId: string) {
-  return productCategories.find((category) => category.id === categoryId)?.name ?? "Maintenance";
+function categoryLabel(categoryId: string, categories: ProductCategory[]) {
+  return categories.find((category) => category.id === categoryId)?.name ?? "Maintenance";
 }
 
 export default function ProductsPage() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [productCategories, setProductCategories] = useState<ProductCategory[]>([]);
+  const [priceListItems, setPriceListItems] = useState<PriceListItem[]>([]);
+  const [activePriceListName, setActivePriceListName] = useState("Tarif actif");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [range, setRange] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadProducts() {
+      try {
+        setIsLoading(true);
+        const response = await fetch("/api/products", { cache: "no-store" });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger le catalogue.");
+        }
+
+        if (mounted) {
+          setProducts(payload.products ?? []);
+          setProductCategories(payload.categories ?? []);
+          setPriceListItems(payload.priceListItems ?? []);
+          setActivePriceListName(payload.activePriceListName ?? "Tarif actif");
+          setError("");
+        }
+      } catch (loadError) {
+        if (mounted) {
+          setError(loadError instanceof Error ? loadError.message : "Impossible de charger le catalogue.");
+        }
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    }
+
+    loadProducts();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const ranges = Array.from(new Set(products.map((product) => product.rangeName)));
 
@@ -94,13 +136,16 @@ export default function ProductsPage() {
         <div className="flex flex-col gap-2 border-b border-gray-200 px-6 py-5 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-base font-bold text-gray-950">Catalogue produits</h2>
-            <p className="text-sm text-gray-500">{filteredProducts.length} produits disponibles dans le tarif actif</p>
+            <p className="text-sm text-gray-500">
+              {isLoading ? "Chargement du catalogue..." : `${filteredProducts.length} produits disponibles dans le tarif actif`}
+            </p>
           </div>
           <div className="flex items-center gap-2 text-sm text-gray-500">
             <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Tarif BIOLAUR SP 2026 CORSE
+            {activePriceListName}
           </div>
         </div>
+        {error ? <div className="border-b border-red-100 bg-red-50 px-6 py-3 text-sm font-medium text-red-700">{error}</div> : null}
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50/80 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
@@ -115,7 +160,7 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {filteredProducts.map((product) => {
+              {!isLoading && filteredProducts.map((product) => {
                 const price = priceListItems.find((item) => item.productId === product.id);
                 return (
                   <tr key={product.id} className="transition hover:bg-emerald-50/30">
@@ -139,7 +184,7 @@ export default function ProductsPage() {
                       </div>
                     </td>
                     <td className="px-6 py-5 align-middle">
-                      <CategoryBadge label={categoryLabel(product.categoryId)} />
+                      <CategoryBadge label={categoryLabel(product.categoryId, productCategories)} />
                     </td>
                     <td className="px-6 py-5 align-middle font-medium text-gray-700">{product.rangeName}</td>
                     <td className="px-6 py-5 align-middle text-gray-600">{product.packaging}</td>
@@ -149,7 +194,7 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-6 py-5 align-middle">
                       <div className="flex justify-end gap-2">
-                        <a href={product.technicalSheetUrl} title="Telecharger FT" aria-label="Telecharger FT">
+                        <a href={product.technicalSheetUrl || "#"} title="Telecharger FT" aria-label="Telecharger FT">
                           <ActionIconButton icon={Download} label="Telecharger FT" asChild>
                             <Download className="h-4 w-4" />
                           </ActionIconButton>
@@ -166,6 +211,20 @@ export default function ProductsPage() {
                   </tr>
                 );
               })}
+              {isLoading ? (
+                <tr>
+                  <td className="px-6 py-10 text-center text-sm font-medium text-gray-500" colSpan={7}>
+                    Chargement des produits Supabase...
+                  </td>
+                </tr>
+              ) : null}
+              {!isLoading && filteredProducts.length === 0 ? (
+                <tr>
+                  <td className="px-6 py-10 text-center text-sm font-medium text-gray-500" colSpan={7}>
+                    Aucun produit ne correspond aux filtres.
+                  </td>
+                </tr>
+              ) : null}
             </tbody>
           </table>
         </div>
