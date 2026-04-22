@@ -9,6 +9,17 @@ function parseNumber(value: FormDataEntryValue | null, fallback: number) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function unknownColumnName(message?: string) {
+  if (!message) return null;
+
+  return (
+    message.match(/Could not find the '([^']+)' column/)?.[1] ??
+    message.match(/column "([^"]+)" does not exist/)?.[1] ??
+    message.match(/'([^']+)' column of 'app_settings'/)?.[1] ??
+    null
+  );
+}
+
 function mapSettings(row: any): AppSettings {
   return {
     id: row.id,
@@ -29,6 +40,50 @@ function mapSettings(row: any): AppSettings {
   };
 }
 
+async function loadUserSettings(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+  const byOwnerUserId = await supabase.from("app_settings").select("*").eq("owner_user_id", userId).maybeSingle();
+
+  if (!byOwnerUserId.error) {
+    return byOwnerUserId;
+  }
+
+  const missingOwnerUserId = unknownColumnName(byOwnerUserId.error.message) === "owner_user_id";
+  if (!missingOwnerUserId) {
+    return byOwnerUserId;
+  }
+
+  return supabase.from("app_settings").select("*").eq("owner_id", userId).maybeSingle();
+}
+
+async function persistSettings(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  existing: { id: string } | null,
+  payload: Record<string, string | number | null>
+) {
+  const nextPayload = { ...payload };
+  const removedColumns = new Set<string>();
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const result = existing
+      ? await supabase.from("app_settings").update(nextPayload).eq("id", existing.id)
+      : await supabase.from("app_settings").insert(nextPayload);
+
+    if (!result.error) {
+      return { error: null, removedColumns };
+    }
+
+    const missingColumn = unknownColumnName(result.error.message);
+    if (!missingColumn || !(missingColumn in nextPayload)) {
+      return { error: result.error, removedColumns };
+    }
+
+    delete nextPayload[missingColumn];
+    removedColumns.add(missingColumn);
+  }
+
+  return { error: new Error("Trop de colonnes app_settings incompatibles.") as Error, removedColumns };
+}
+
 async function saveSettings(_previousState: SettingsSaveState, formData: FormData): Promise<SettingsSaveState> {
   "use server";
 
@@ -44,6 +99,7 @@ async function saveSettings(_previousState: SettingsSaveState, formData: FormDat
 
   const payload = {
     owner_user_id: user.id,
+    owner_id: user.id,
     company_name: String(formData.get("companyName") ?? "").trim(),
     sender_name: String(formData.get("senderName") ?? "").trim() || "Commercial Biolaur",
     sender_email: String(formData.get("senderEmail") ?? "").trim(),
@@ -61,21 +117,27 @@ async function saveSettings(_previousState: SettingsSaveState, formData: FormDat
     return { ok: false, message: "La societe et l'email expediteur sont obligatoires." };
   }
 
-  const { data: existing, error: loadError } = await supabase.from("app_settings").select("id").eq("owner_user_id", user.id).maybeSingle();
+  const { data: existing, error: loadError } = await loadUserSettings(supabase, user.id);
 
   if (loadError) {
     return { ok: false, message: `Lecture des parametres impossible : ${loadError.message}` };
   }
 
-  const { error: saveError } = existing
-    ? await supabase.from("app_settings").update(payload).eq("id", existing.id).eq("owner_user_id", user.id)
-    : await supabase.from("app_settings").insert(payload);
+  const { error: saveError, removedColumns } = await persistSettings(supabase, existing ? { id: existing.id } : null, payload);
 
   if (saveError) {
-    return { ok: false, message: `Enregistrement impossible : ${saveError.message}` };
+    return {
+      ok: false,
+      message: `Enregistrement impossible : ${saveError.message}`
+    };
   }
 
-  return { ok: true, message: "Parametres enregistres." };
+  return {
+    ok: true,
+    message: removedColumns.size
+      ? `Parametres enregistres. Champs non supportes ignores : ${Array.from(removedColumns).join(", ")}.`
+      : "Parametres enregistres."
+  };
 }
 
 export default async function SettingsPage() {
@@ -84,9 +146,7 @@ export default async function SettingsPage() {
     data: { user }
   } = await supabase.auth.getUser();
 
-  const { data } = user
-    ? await supabase.from("app_settings").select("*").eq("owner_user_id", user.id).maybeSingle()
-    : { data: null };
+  const { data } = user ? await loadUserSettings(supabase, user.id) : { data: null };
 
   const settings = data ? mapSettings(data) : appSettings;
 
