@@ -47,3 +47,40 @@ create policy "catalog public read clients"
 on public.clients
 for select
 using (type_fiche = 'client');
+
+drop policy if exists "public read orders" on public.orders;
+create policy "public read orders"
+on public.orders
+for select
+using (true);
+
+drop policy if exists "public insert orders" on public.orders;
+create policy "public insert orders"
+on public.orders
+for insert
+with check (
+  exists (
+    select 1
+    from public.clients c
+    where c.id = orders.client_id
+      and c.type_fiche = 'client'
+  )
+);
+
+drop policy if exists "public delete orders" on public.orders;
+create policy "public delete orders"
+on public.orders
+for delete
+using (true);
+
+drop policy if exists "public insert order items" on public.order_items;
+create policy "public insert order items"
+on public.order_items
+for insert
+with check (
+  exists (
+    select 1
+    from public.orders o
+    where o.id = order_items.order_id
+  )
+);

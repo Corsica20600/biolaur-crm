@@ -108,26 +108,31 @@ export function OrderForm() {
     setError(null);
     setSubmitting(true);
 
-    const response = await fetch("/api/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientId,
-        comments,
-        lines: lines.map((line) => ({ productId: line.productId, quantity: line.quantity }))
-      })
-    });
+    try {
+      const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId,
+          comments,
+          lines: lines.map((line) => ({ productId: line.productId, quantity: line.quantity }))
+        })
+      });
 
-    const payload = (await response.json()) as { ok: boolean; orderId?: string; error?: string };
-    setSubmitting(false);
+      const payload = (await response.json().catch(() => null)) as { ok: boolean; orderId?: string; error?: string } | null;
 
-    if (!payload.ok || !payload.orderId) {
-      setError(payload.error ?? "Creation commande impossible.");
-      return;
+      if (!response.ok || !payload?.ok || !payload.orderId) {
+        setError(payload?.error ?? "Creation commande impossible.");
+        return;
+      }
+
+      router.push(`/orders/${payload.orderId}`);
+      router.refresh();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Creation commande impossible.");
+    } finally {
+      setSubmitting(false);
     }
-
-    router.push(`/orders/${payload.orderId}`);
-    router.refresh();
   }
 
   if (loading) {
