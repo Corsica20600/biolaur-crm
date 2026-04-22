@@ -1,16 +1,52 @@
+"use client";
+
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { ArrowLeft, Copy, FileDown, Mail } from "lucide-react";
+import { useEffect, useState } from "react";
 import { EmailComposer } from "@/components/emails/email-composer";
 import { OrderItemsTable } from "@/components/orders/order-items-table";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { emailLogs, orders, prospectsClients } from "@/lib/demo-data";
+import { emailLogs } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import type { Order } from "@/types/crm";
 
-export default async function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const order = orders.find((item) => item.id === id) ?? orders[0];
-  const record = prospectsClients.find((item) => item.id === order.prospectClientId);
+export default function OrderDetailPage() {
+  const params = useParams<{ id: string }>();
+  const [remoteOrder, setRemoteOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadRemoteOrder() {
+      const response = await fetch(`/api/orders/${params.id}`, { cache: "no-store" });
+      setLoading(false);
+      if (!response.ok) return;
+      const payload = (await response.json()) as { ok: boolean; order?: Order };
+      if (payload.ok && payload.order) setRemoteOrder(payload.order);
+    }
+
+    loadRemoteOrder();
+  }, [params.id]);
+
+  const order = remoteOrder;
+  if (loading) {
+    return <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500">Chargement de la commande...</div>;
+  }
+
+  if (!order) {
+    return (
+      <div className="space-y-4">
+        <Link href="/orders" className="inline-flex items-center gap-2 text-sm text-slate-500 hover:text-leaf">
+          <ArrowLeft className="h-4 w-4" />
+          Retour commandes
+        </Link>
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm font-medium text-rose-700">
+          Commande introuvable dans Supabase.
+        </div>
+      </div>
+    );
+  }
   const orderEmails = emailLogs.filter((email) => email.orderId === order.id);
 
   return (
@@ -21,7 +57,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       </Link>
       <PageHeader
         title={order.orderNumber}
-        description={`${record?.tradeName} - ${formatDate(order.orderDate)}`}
+        description={`${order.clientName ?? "Client"} - ${formatDate(order.orderDate)}`}
         actions={
           <>
             <a href={`/api/orders/${order.id}/pdf`} target="_blank" className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
@@ -50,7 +86,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               </div>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
-              <Info label="Client" value={record?.companyName} href={record ? `/crm/${record.id}` : undefined} />
+              <Info label="Client" value={order.clientName} />
               <Info label="Livraison" value={`${order.deliveryAddressLine1}, ${order.deliveryPostalCode} ${order.deliveryCity}`} />
               <Info label="Commission estimee" value={formatCurrency(order.estimatedCommissionAmount)} />
             </div>
@@ -74,7 +110,9 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         <aside className="space-y-4">
           <section className="rounded-lg border border-line bg-white p-4">
             <h2 className="mb-3 font-semibold text-ink">Documents lies</h2>
-            <a href={`/api/orders/${order.id}/pdf`} className="block rounded-md border border-line p-3 text-sm text-leaf hover:bg-slate-50">Generer le bon PDF</a>
+            <a href={`/api/orders/${order.id}/pdf`} className="block rounded-md border border-line p-3 text-sm text-leaf hover:bg-slate-50">
+              Generer le bon PDF
+            </a>
           </section>
           <section className="rounded-lg border border-line bg-white p-4">
             <h2 className="mb-3 font-semibold text-ink">Historique d'envoi</h2>
@@ -82,9 +120,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               {orderEmails.map((email) => (
                 <div key={email.id} className="rounded-md border border-line p-3 text-sm">
                   <p className="font-medium">{email.subject}</p>
-                  <p className="text-xs text-slate-500">{formatDate(email.sentAt)} - {email.attachments.length} piece(s)</p>
+                  <p className="text-xs text-slate-500">
+                    {formatDate(email.sentAt)} - {email.attachments.length} piece(s)
+                  </p>
                 </div>
               ))}
+              {!orderEmails.length ? <p className="text-sm text-slate-500">Aucun email envoye pour cette commande.</p> : null}
             </div>
           </section>
         </aside>
@@ -98,7 +139,13 @@ function Info({ label, value, href }: { label: string; value?: string; href?: st
   return (
     <div>
       <p className="text-xs uppercase text-slate-500">{label}</p>
-      {href ? <Link href={href} className="hover:text-leaf">{content}</Link> : content}
+      {href ? (
+        <Link href={href} className="hover:text-leaf">
+          {content}
+        </Link>
+      ) : (
+        content
+      )}
     </div>
   );
 }

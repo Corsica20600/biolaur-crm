@@ -2,14 +2,27 @@
 
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/page-header";
 import { DataTable } from "@/components/ui/data-table";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { orders, prospectsClients } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import type { Order } from "@/types/crm";
 
 export default function OrdersPage() {
+  const [remoteOrders, setRemoteOrders] = useState<Order[]>([]);
+
+  useEffect(() => {
+    async function loadRemoteOrders() {
+      const response = await fetch("/api/orders", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as { ok: boolean; orders?: Order[] };
+      if (payload.ok) setRemoteOrders(payload.orders ?? []);
+    }
+
+    loadRemoteOrders();
+  }, []);
+
   return (
     <>
       <PageHeader
@@ -23,15 +36,15 @@ export default function OrdersPage() {
         }
       />
       <DataTable<Order>
-        rows={orders}
+        rows={remoteOrders}
         searchPlaceholder="Rechercher numero, client..."
-        searchKeys={[(row) => row.orderNumber, (row) => prospectsClients.find((record) => record.id === row.prospectClientId)?.tradeName]}
+        searchKeys={[(row) => row.orderNumber, (row) => row.clientName]}
         filters={[
           { key: "orderStatus", label: "Statut", value: "", options: [{ label: "Brouillon", value: "brouillon" }, { label: "Envoyee", value: "envoyee" }, { label: "Validee", value: "validee" }, { label: "Payee", value: "payee" }] }
         ]}
         columns={[
           { key: "orderNumber", header: "Commande", sortable: true, render: (row) => <Link href={`/orders/${row.id}`} className="font-medium text-ink hover:text-leaf">{row.orderNumber}</Link> },
-          { key: "prospectClientId", header: "Client", render: (row) => prospectsClients.find((record) => record.id === row.prospectClientId)?.tradeName },
+          { key: "prospectClientId", header: "Client", render: (row) => row.clientName ?? "-" },
           { key: "orderDate", header: "Date", sortable: true, render: (row) => formatDate(row.orderDate) },
           { key: "orderStatus", header: "Statut", render: (row) => <StatusBadge status={row.orderStatus} /> },
           { key: "subtotalHt", header: "Total HT", sortable: true, accessor: (row) => row.subtotalHt, render: (row) => formatCurrency(row.subtotalHt) },

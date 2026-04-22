@@ -1,10 +1,69 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { clients, orders } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { createAdminClient } from "@/supabase/admin";
 
 export async function createOrderPdf(orderId: string) {
-  const order = orders.find((item) => item.id === orderId) ?? orders[0];
-  const client = clients.find((item) => item.id === order.prospectClientId);
+  let order = orders.find((item) => item.id === orderId);
+  let client = order ? clients.find((item) => item.id === order!.prospectClientId) : undefined;
+
+  if (!order) {
+    const supabase = createAdminClient();
+    const [{ data: dbOrder }, { data: dbItems }] = await Promise.all([
+      supabase.from("orders").select("*, clients(*)").eq("id", orderId).single(),
+      supabase.from("order_items").select("*").eq("order_id", orderId).order("created_at")
+    ]);
+
+    if (dbOrder) {
+      order = {
+        id: dbOrder.id,
+        ownerUserId: dbOrder.owner_id,
+        orderNumber: dbOrder.numero_commande,
+        prospectClientId: dbOrder.client_id,
+        clientName: dbOrder.clients?.nom_commercial || dbOrder.clients?.raison_sociale,
+        orderStatus: dbOrder.statut,
+        orderDate: dbOrder.date_commande,
+        deliveryAddressLine1: dbOrder.adresse_livraison ?? "",
+        deliveryPostalCode: "",
+        deliveryCity: "",
+        deliveryCountry: "France",
+        comments: dbOrder.commentaire ?? "",
+        subtotalHt: Number(dbOrder.total_ht ?? 0),
+        totalVat: Number(dbOrder.total_tva ?? 0),
+        totalTtc: Number(dbOrder.total_ttc ?? 0),
+        estimatedCommissionAmount: Number(dbOrder.commission_estimee ?? 0),
+        commissionRate: 20,
+        createdAt: dbOrder.created_at,
+        updatedAt: dbOrder.updated_at,
+        items: (dbItems ?? []).map((item) => ({
+          id: item.id,
+          orderId: item.order_id,
+          productId: item.product_id,
+          productReference: item.reference,
+          productName: item.designation,
+          quantity: Number(item.quantite ?? 0),
+          unitPriceHt: Number(item.prix_unitaire_ht ?? 0),
+          discountPercent: Number(item.remise ?? 0),
+          vatRate: 20,
+          lineTotalHt: Number(item.total_ligne_ht ?? 0),
+          sortOrder: 0,
+          createdAt: item.created_at,
+          updatedAt: item.updated_at
+        }))
+      };
+      client = dbOrder.clients
+        ? {
+            companyName: dbOrder.clients.raison_sociale,
+            addressLine1: dbOrder.clients.adresse,
+            postalCode: dbOrder.clients.code_postal,
+            city: dbOrder.clients.ville
+          } as typeof client
+        : undefined;
+    }
+  }
+
+  order ??= orders[0];
+  client ??= clients.find((item) => item.id === order.prospectClientId);
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595, 842]);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);

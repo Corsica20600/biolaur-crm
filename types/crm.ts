@@ -164,6 +164,7 @@ export interface Order {
   ownerUserId: string;
   orderNumber: string;
   prospectClientId: string;
+  clientName?: string;
   orderStatus: OrderStatus;
   orderDate: string;
   deliveryAddressLine1: string;

@@ -2,6 +2,7 @@ node_modules
 .next
 .env.local
 .env
+supabase/.temp/
 
 node_modules/
 .next/
