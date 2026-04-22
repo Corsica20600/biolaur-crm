@@ -13,6 +13,14 @@ export async function uploadDocument(formData: FormData) {
   }
 
   const supabase = await createClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Authentification requise." };
+  }
+
   const bucket =
     type === "fiche_technique"
       ? "technical-sheets"
@@ -21,7 +29,8 @@ export async function uploadDocument(formData: FormData) {
         : type === "bon_commande"
           ? "order-pdfs"
           : "client-documents";
-  const path = `${crypto.randomUUID()}-${file.name}`;
+  const isCatalogDocument = bucket === "technical-sheets" || bucket === "safety-sheets";
+  const path = isCatalogDocument ? `${productId || "catalog"}/${crypto.randomUUID()}-${file.name}` : `${user.id}/${crypto.randomUUID()}-${file.name}`;
   const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false });
 
   if (error) {
@@ -35,7 +44,8 @@ export async function uploadDocument(formData: FormData) {
         file_name: file.name,
         storage_path: `${bucket}/${path}`,
         mime_type: file.type,
-        product_id: productId
+        product_id: productId,
+        owner_user_id: user.id
       })
     : { error: null };
 

@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
+import { requireAuthenticatedUser } from "@/lib/server-auth";
 import { createAdminClient } from "@/supabase/admin";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const { user, response } = await requireAuthenticatedUser();
+  if (response || !user) return response;
+
   const supabase = createAdminClient();
 
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
-    supabase.from("orders").select("*, clients(raison_sociale,nom_commercial)").eq("id", id).single(),
-    supabase.from("order_items").select("*").eq("order_id", id).order("created_at")
+    supabase.from("orders").select("*, clients(raison_sociale,nom_commercial)").eq("id", id).eq("owner_user_id", user.id).single(),
+    supabase.from("order_items").select("*").eq("order_id", id).eq("owner_user_id", user.id).order("created_at")
   ]);
 
   const error = orderError ?? itemsError;
@@ -19,7 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     ok: true,
     order: {
       id: order.id,
-      ownerUserId: order.owner_id,
+      ownerUserId: order.owner_user_id ?? order.owner_id,
       orderNumber: order.numero_commande,
       prospectClientId: order.client_id,
       clientName: order.clients?.nom_commercial || order.clients?.raison_sociale,

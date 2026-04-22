@@ -3,21 +3,31 @@ import { clients, orders } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { createAdminClient } from "@/supabase/admin";
 
-export async function createOrderPdf(orderId: string) {
-  let order = orders.find((item) => item.id === orderId);
+export async function createOrderPdf(orderId: string, ownerUserId?: string) {
+  let order = ownerUserId ? undefined : orders.find((item) => item.id === orderId);
   let client = order ? clients.find((item) => item.id === order!.prospectClientId) : undefined;
 
   if (!order) {
     const supabase = createAdminClient();
     const [{ data: dbOrder }, { data: dbItems }] = await Promise.all([
-      supabase.from("orders").select("*, clients(*)").eq("id", orderId).single(),
-      supabase.from("order_items").select("*").eq("order_id", orderId).order("created_at")
+      supabase
+        .from("orders")
+        .select("*, clients(*)")
+        .eq("id", orderId)
+        .match(ownerUserId ? { owner_user_id: ownerUserId } : {})
+        .single(),
+      supabase
+        .from("order_items")
+        .select("*")
+        .eq("order_id", orderId)
+        .match(ownerUserId ? { owner_user_id: ownerUserId } : {})
+        .order("created_at")
     ]);
 
     if (dbOrder) {
       order = {
         id: dbOrder.id,
-        ownerUserId: dbOrder.owner_id,
+        ownerUserId: dbOrder.owner_user_id ?? dbOrder.owner_id,
         orderNumber: dbOrder.numero_commande,
         prospectClientId: dbOrder.client_id,
         clientName: dbOrder.clients?.nom_commercial || dbOrder.clients?.raison_sociale,
@@ -60,6 +70,10 @@ export async function createOrderPdf(orderId: string) {
           } as typeof client
         : undefined;
     }
+  }
+
+  if (ownerUserId && !order) {
+    throw new Error("Commande introuvable pour cet utilisateur.");
   }
 
   order ??= orders[0];

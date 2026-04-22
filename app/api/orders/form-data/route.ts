@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/supabase/admin";
+import { requireAuthenticatedUser } from "@/lib/server-auth";
+import { createAdminClient } from "@/supabase/admin";
 
 export async function GET() {
   try {
-    const supabase = createServerSupabaseClient();
+    const { user, response } = await requireAuthenticatedUser();
+    if (response || !user) return response;
+
+    const supabase = createAdminClient();
 
     const [{ data: clients, error: clientsError }, { data: products, error: productsError }, { data: priceItems, error: pricesError }] =
       await Promise.all([
         supabase
           .from("clients")
-          .select("id,owner_id,raison_sociale,nom_commercial,ville,adresse,code_postal,pays,type_fiche")
+          .select("id,owner_id,owner_user_id,raison_sociale,nom_commercial,ville,adresse,code_postal,pays,type_fiche")
+          .eq("owner_user_id", user.id)
           .eq("type_fiche", "client")
           .order("raison_sociale"),
         supabase

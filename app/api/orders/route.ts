@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { calculateOrderLineTotal, calculateVat } from "@/lib/utils";
+import { requireAuthenticatedUser } from "@/lib/server-auth";
 import { createAdminClient, createServerSupabaseClient } from "@/supabase/admin";
 
 type CreateOrderBody = {
@@ -14,7 +15,7 @@ type CreateOrderBody = {
 function mapOrder(row: any, items: any[] = []) {
   return {
     id: row.id,
-    ownerUserId: row.owner_id,
+    ownerUserId: row.owner_user_id ?? row.owner_id,
     orderNumber: row.numero_commande,
     prospectClientId: row.client_id,
     clientName: row.clients?.nom_commercial || row.clients?.raison_sociale,
@@ -51,10 +52,14 @@ function mapOrder(row: any, items: any[] = []) {
 }
 
 export async function GET() {
+  const { user, response } = await requireAuthenticatedUser();
+  if (response || !user) return response;
+
   const supabase = createAdminClient();
   const { data: orderRows, error } = await supabase
     .from("orders")
     .select("*, clients(raison_sociale,nom_commercial)")
+    .eq("owner_user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -77,6 +82,9 @@ async function createOrderNumber(supabase: ReturnType<typeof createServerSupabas
 
 export async function POST(request: Request) {
   try {
+    const { user, response } = await requireAuthenticatedUser();
+    if (response || !user) return response;
+
     const body = (await request.json().catch(() => null)) as CreateOrderBody | null;
 
     if (!body?.clientId || !body.lines?.length) {
@@ -87,8 +95,9 @@ export async function POST(request: Request) {
 
     const { data: client, error: clientError } = await supabase
       .from("clients")
-      .select("id,owner_id,adresse,code_postal,ville,pays,type_fiche")
+      .select("id,owner_id,owner_user_id,adresse,code_postal,ville,pays,type_fiche")
       .eq("id", body.clientId)
+      .eq("owner_user_id", user.id)
       .eq("type_fiche", "client")
       .single();
 
@@ -125,7 +134,8 @@ export async function POST(request: Request) {
       const totalLine = calculateOrderLineTotal(quantity, unitPrice, discount);
 
       return {
-        owner_id: client.owner_id,
+        owner_id: user.id,
+        owner_user_id: user.id,
         product_id: product.id,
         reference: product.reference,
         designation: product.nom_produit,
@@ -145,7 +155,8 @@ export async function POST(request: Request) {
     const { data: order, error: orderError } = await supabase
       .from("orders")
       .insert({
-        owner_id: client.owner_id,
+        owner_id: user.id,
+        owner_user_id: user.id,
         numero_commande: orderNumber,
         client_id: client.id,
         date_commande: new Date().toISOString().slice(0, 10),
@@ -172,7 +183,7 @@ export async function POST(request: Request) {
     );
 
     if (itemsError) {
-      await supabase.from("orders").delete().eq("id", order.id);
+      await supabase.from("orders").delete().eq("id", order.id).eq("owner_user_id", user.id);
       return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
     }
 
