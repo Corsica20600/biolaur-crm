@@ -41,3 +41,9 @@ using (
       and p.actif = true
   )
 );
+
+drop policy if exists "catalog public read clients" on public.clients;
+create policy "catalog public read clients"
+on public.clients
+for select
+using (type_fiche = 'client');

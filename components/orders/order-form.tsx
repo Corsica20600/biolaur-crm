@@ -54,29 +54,34 @@ export function OrderForm() {
   useEffect(() => {
     async function loadFormData() {
       setLoading(true);
-      const response = await fetch("/api/orders/form-data", { cache: "no-store" });
-      const payload = (await response.json()) as {
-        ok: boolean;
-        error?: string;
-        clients?: FormClient[];
-        products?: FormProduct[];
-        priceItems?: FormPriceItem[];
-      };
+      try {
+        const response = await fetch("/api/orders/form-data", { cache: "no-store" });
+        const payload = (await response.json().catch(() => null)) as {
+          ok: boolean;
+          error?: string;
+          clients?: FormClient[];
+          products?: FormProduct[];
+          priceItems?: FormPriceItem[];
+        } | null;
 
-      if (!payload.ok) {
-        setError(payload.error ?? "Chargement impossible.");
+        if (!response.ok || !payload?.ok) {
+          setError(payload?.error ?? "Chargement impossible.");
+          setLoading(false);
+          return;
+        }
+
+        const loadedClients = payload.clients ?? [];
+        const loadedProducts = payload.products ?? [];
+        setClients(loadedClients);
+        setProducts(loadedProducts);
+        setPriceItems(payload.priceItems ?? []);
+        setClientId(loadedClients[0]?.id ?? "");
+        setLines(loadedProducts[0] ? [{ productId: loadedProducts[0].id, quantity: 1 }] : []);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Chargement impossible.");
+      } finally {
         setLoading(false);
-        return;
       }
-
-      const loadedClients = payload.clients ?? [];
-      const loadedProducts = payload.products ?? [];
-      setClients(loadedClients);
-      setProducts(loadedProducts);
-      setPriceItems(payload.priceItems ?? []);
-      setClientId(loadedClients[0]?.id ?? "");
-      setLines(loadedProducts[0] ? [{ productId: loadedProducts[0].id, quantity: 1 }] : []);
-      setLoading(false);
     }
 
     loadFormData();
@@ -127,6 +132,10 @@ export function OrderForm() {
 
   if (loading) {
     return <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500">Chargement des clients, produits et tarifs...</div>;
+  }
+
+  if (error && (!clients.length || !products.length)) {
+    return <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-sm font-medium text-rose-700">{error}</div>;
   }
 
   if (!clients.length || !products.length) {
