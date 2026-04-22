@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, Download, Mail, Plus } from "lucide-react";
 import { ProductForm } from "@/components/forms/product-form";
 import { PageHeader } from "@/components/page-header";
+import { createSignedStorageUrl } from "@/lib/catalog-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { createServerSupabaseClient } from "@/supabase/admin";
 import type { Product, ProductCategory, ProductDocument } from "@/types/crm";
@@ -54,6 +55,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     );
   }
 
+  const signedProductTechnicalSheetUrl = await createSignedStorageUrl(supabase, productRow.fiche_technique_url, "technical-sheets");
   const product: Product = {
     id: productRow.id,
     categoryId: productRow.categorie_id ?? "",
@@ -69,7 +71,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     ean: productRow.ean ?? "",
     vatRate: toNumber(productRow.tva),
     isActive: productRow.actif,
-    technicalSheetUrl: productRow.fiche_technique_url ?? "",
+    technicalSheetUrl: signedProductTechnicalSheetUrl || productRow.fiche_technique_url || "",
     safetySheetUrl: productRow.fiche_securite_url ?? undefined,
     notes: productRow.notes ?? undefined,
     createdAt: productRow.created_at,
@@ -83,18 +85,20 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
     updatedAt: product.updatedAt
   };
   const price = { unitPriceHt: toNumber(priceError ? productRow.tarif_ht : priceRows?.[0]?.prix_ht ?? productRow.tarif_ht) };
-  const docs: ProductDocument[] = (docsError ? [] : docsRows ?? []).map((doc) => ({
-    id: doc.id,
-    productId: doc.product_id,
-    documentType: doc.document_type,
-    title: doc.title,
-    fileName: doc.file_name ?? "",
-    storagePath: doc.storage_path ?? "",
-    publicUrl: doc.public_url ?? "",
-    mimeType: doc.mime_type ?? "",
-    createdAt: doc.created_at,
-    updatedAt: doc.updated_at
-  }));
+  const docs: ProductDocument[] = await Promise.all(
+    (docsError ? [] : docsRows ?? []).map(async (doc) => ({
+      id: doc.id,
+      productId: doc.product_id,
+      documentType: doc.document_type,
+      title: doc.title,
+      fileName: doc.file_name ?? "",
+      storagePath: doc.storage_path ?? "",
+      publicUrl: (await createSignedStorageUrl(supabase, doc.storage_path ?? doc.public_url, doc.document_type === "fiche_securite" ? "safety-sheets" : "technical-sheets")) || doc.public_url || "",
+      mimeType: doc.mime_type ?? "",
+      createdAt: doc.created_at,
+      updatedAt: doc.updated_at
+    }))
+  );
   const productDocuments: ProductDocument[] =
     docs.length > 0 || !product.technicalSheetUrl
       ? docs

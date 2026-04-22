@@ -5,6 +5,40 @@ function toNumber(value: unknown) {
   return Number(value ?? 0);
 }
 
+function resolveStorageObject(value?: string | null, fallbackBucket = "technical-sheets") {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+    const marker = "/storage/v1/object/";
+    const markerIndex = url.pathname.indexOf(marker);
+
+    if (markerIndex >= 0) {
+      const objectPath = url.pathname.slice(markerIndex + marker.length).replace(/^public\//, "").replace(/^sign\//, "");
+      const [bucket, ...pathParts] = objectPath.split("/");
+      return bucket && pathParts.length ? { bucket, path: decodeURIComponent(pathParts.join("/")) } : null;
+    }
+  } catch {
+    // Not a URL; treat it as a storage path.
+  }
+
+  const cleaned = value.replace(/^\/+/, "");
+  const [bucketCandidate, ...pathParts] = cleaned.split("/");
+  if (["technical-sheets", "safety-sheets", "order-pdfs", "client-documents"].includes(bucketCandidate) && pathParts.length) {
+    return { bucket: bucketCandidate, path: pathParts.join("/") };
+  }
+
+  return { bucket: fallbackBucket, path: cleaned };
+}
+
+export async function createSignedStorageUrl(supabase: ReturnType<typeof createServerSupabaseClient>, value?: string | null, fallbackBucket = "technical-sheets") {
+  const object = resolveStorageObject(value, fallbackBucket);
+  if (!object?.path) return "";
+
+  const { data, error } = await supabase.storage.from(object.bucket).createSignedUrl(object.path, 60 * 60);
+  return error ? "" : (data.signedUrl ?? "");
+}
+
 export async function getProductCatalog() {
   const supabase = createServerSupabaseClient();
 
@@ -35,6 +69,24 @@ export async function getProductCatalog() {
 
   if (priceItemsError) throw priceItemsError;
 
+  const productIds = (products ?? []).map((product) => product.id);
+  const { data: documentRows } = productIds.length
+    ? await supabase
+        .from("product_documents")
+        .select("product_id,document_type,storage_path,public_url")
+        .in("product_id", productIds)
+        .eq("document_type", "fiche_technique")
+    : { data: [] };
+
+  const signedTechnicalSheets = new Map<string, string>();
+  await Promise.all(
+    (documentRows ?? []).map(async (document) => {
+      if (signedTechnicalSheets.has(document.product_id)) return;
+      const signedUrl = await createSignedStorageUrl(supabase, document.storage_path ?? document.public_url, "technical-sheets");
+      if (signedUrl) signedTechnicalSheets.set(document.product_id, signedUrl);
+    })
+  );
+
   const mappedCategories: ProductCategory[] = (categories ?? []).map((category) => ({
     id: category.id,
     name: category.name,
@@ -59,7 +111,7 @@ export async function getProductCatalog() {
     ean: product.ean ?? "",
     vatRate: toNumber(product.tva),
     isActive: product.actif,
-    technicalSheetUrl: product.fiche_technique_url ?? "",
+    technicalSheetUrl: signedTechnicalSheets.get(product.id) ?? product.fiche_technique_url ?? "",
     safetySheetUrl: product.fiche_securite_url ?? undefined,
     notes: product.notes ?? undefined,
     createdAt: product.created_at,
@@ -115,6 +167,24 @@ export async function getPriceListCatalog() {
   if (itemsError) throw itemsError;
   if (productsError) throw productsError;
 
+  const productIds = (products ?? []).map((product) => product.id);
+  const { data: documentRows } = productIds.length
+    ? await supabase
+        .from("product_documents")
+        .select("product_id,document_type,storage_path,public_url")
+        .in("product_id", productIds)
+        .eq("document_type", "fiche_technique")
+    : { data: [] };
+
+  const signedTechnicalSheets = new Map<string, string>();
+  await Promise.all(
+    (documentRows ?? []).map(async (document) => {
+      if (signedTechnicalSheets.has(document.product_id)) return;
+      const signedUrl = await createSignedStorageUrl(supabase, document.storage_path ?? document.public_url, "technical-sheets");
+      if (signedUrl) signedTechnicalSheets.set(document.product_id, signedUrl);
+    })
+  );
+
   const priceLists: PriceList[] = (lists ?? []).map((list) => ({
     id: list.id,
     name: list.name,
@@ -153,7 +223,7 @@ export async function getPriceListCatalog() {
     ean: product.ean ?? "",
     vatRate: toNumber(product.tva),
     isActive: product.actif,
-    technicalSheetUrl: product.fiche_technique_url ?? "",
+    technicalSheetUrl: signedTechnicalSheets.get(product.id) ?? product.fiche_technique_url ?? "",
     safetySheetUrl: product.fiche_securite_url ?? undefined,
     notes: product.notes ?? undefined,
     createdAt: product.created_at,
