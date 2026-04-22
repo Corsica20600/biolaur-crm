@@ -1,67 +1,264 @@
 "use server";
 
-import { emailLogs } from "@/lib/demo-data";
+import { revalidatePath } from "next/cache";
+import { createOrderPdf } from "@/lib/pdf/order-pdf";
+import { requireAuthenticatedUser } from "@/lib/server-auth";
+import { createAdminClient } from "@/supabase/admin";
+
+type EmailAttachmentInput = {
+  type: "product_document" | "order_pdf";
+  id: string;
+};
 
 type SendEmailInput = {
-  prospectClientId: string;
+  prospectClientId?: string;
+  clientId?: string;
   orderId?: string;
+  templateId?: string;
   to: string;
   subject: string;
   body: string;
-  attachmentIds: string[];
+  attachments: EmailAttachmentInput[];
 };
 
-export async function sendCrmEmail(input: SendEmailInput) {
-  const resendKey = process.env.RESEND_API_KEY;
-  const from = process.env.EMAIL_FROM ?? "commercial@example.com";
+type PreparedAttachment = {
+  attachmentType: "product_document" | "order_pdf" | "client_document" | "other";
+  productDocumentId?: string;
+  fileName: string;
+  fileUrl: string;
+  brevo: { name: string; content: string } | { name: string; url: string };
+};
 
-  if (!resendKey) {
-    emailLogs.unshift({
-      id: `draft-${Date.now()}`,
-      ownerUserId: "demo-user",
-      prospectClientId: input.prospectClientId,
-      orderId: input.orderId,
-      recipientEmail: input.to,
-      subject: input.subject,
-      body: input.body,
-      attachments: input.attachmentIds.map((id) => ({
-        id: `att-${id}`,
-        emailLogId: `draft-${Date.now()}`,
-        attachmentType: "other",
-        fileName: id,
-        fileUrl: id,
-        createdAt: new Date().toISOString()
-      })),
-      sendStatus: "draft",
-      sentAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+function parseEmailFrom(value?: string) {
+  if (!value) return "";
+  const match = value.match(/<([^>]+)>/);
+  return match?.[1] ?? value;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function resolveStorageObject(value?: string | null, fallbackBucket = "technical-sheets") {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+    const marker = "/storage/v1/object/";
+    const markerIndex = url.pathname.indexOf(marker);
+
+    if (markerIndex >= 0) {
+      const objectPath = url.pathname.slice(markerIndex + marker.length).replace(/^public\//, "").replace(/^sign\//, "");
+      const [bucket, ...pathParts] = objectPath.split("/");
+      return bucket && pathParts.length ? { bucket, path: decodeURIComponent(pathParts.join("/")) } : null;
+    }
+  } catch {
+    // Not a URL; treat it as a storage path.
+  }
+
+  const cleaned = value.replace(/^\/+/, "");
+  const [bucketCandidate, ...pathParts] = cleaned.split("/");
+  if (["technical-sheets", "safety-sheets", "order-pdfs", "client-documents"].includes(bucketCandidate) && pathParts.length) {
+    return { bucket: bucketCandidate, path: pathParts.join("/") };
+  }
+
+  return { bucket: fallbackBucket, path: cleaned };
+}
+
+async function blobToBase64(blob: Blob) {
+  const buffer = Buffer.from(await blob.arrayBuffer());
+  return buffer.toString("base64");
+}
+
+async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, userId: string) {
+  const clientId = input.clientId ?? input.prospectClientId ?? null;
+  const modernPayload = {
+    owner_user_id: userId,
+    prospect_client_id: clientId,
+    order_id: input.orderId || null,
+    email_template_id: input.templateId || null,
+    recipient_email: input.to,
+    subject: input.subject,
+    body: input.body,
+    send_status: "sent",
+    sent_at: new Date().toISOString()
+  };
+
+  const hybridPayload = {
+    owner_user_id: userId,
+    client_id: clientId,
+    order_id: input.orderId || null,
+    email_template_id: input.templateId || null,
+    recipient_email: input.to,
+    subject: input.subject,
+    body: input.body,
+    send_status: "sent",
+    sent_at: new Date().toISOString()
+  };
+
+  const legacyPayload = {
+    owner_id: userId,
+    owner_user_id: userId,
+    client_id: clientId,
+    order_id: input.orderId || null,
+    template_id: input.templateId || null,
+    to_email: input.to,
+    subject: input.subject,
+    body: input.body,
+    status: "sent",
+    sent_at: new Date().toISOString()
+  };
+
+  const payloads = [modernPayload, hybridPayload, legacyPayload];
+  let lastError = "";
+
+  for (const payload of payloads) {
+    const { data, error } = await supabase.from("email_logs").insert(payload).select("id").single();
+    if (!error && data?.id) return data.id as string;
+    lastError = error?.message ?? "Insertion email_logs impossible.";
+  }
+
+  throw new Error(lastError);
+}
+
+async function insertEmailAttachments(
+  supabase: ReturnType<typeof createAdminClient>,
+  emailLogId: string,
+  ownerUserId: string,
+  attachments: PreparedAttachment[]
+) {
+  if (!attachments.length) return;
+
+  const rows = attachments.map((attachment) => ({
+    owner_user_id: ownerUserId,
+    email_log_id: emailLogId,
+    attachment_type: attachment.attachmentType,
+    product_document_id: attachment.productDocumentId ?? null,
+    file_name: attachment.fileName,
+    file_url: attachment.fileUrl
+  }));
+
+  const { error } = await supabase.from("email_log_attachments").insert(rows);
+  if (!error) return;
+
+  const { error: retryError } = await supabase.from("email_log_attachments").insert(
+    rows.map(({ owner_user_id: _ownerUserId, ...row }) => row)
+  );
+
+  if (retryError) throw retryError;
+}
+
+async function prepareAttachments(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, ownerUserId: string) {
+  const prepared: PreparedAttachment[] = [];
+  const productDocumentIds = input.attachments.filter((item) => item.type === "product_document").map((item) => item.id);
+
+  if (productDocumentIds.length) {
+    const { data, error } = await supabase
+      .from("product_documents")
+      .select("id,document_type,title,file_name,storage_path,public_url")
+      .in("id", productDocumentIds);
+
+    if (error) throw error;
+
+    for (const document of data ?? []) {
+      const fallbackBucket = document.document_type === "fiche_securite" ? "safety-sheets" : "technical-sheets";
+      const storageObject = resolveStorageObject(document.storage_path ?? document.public_url, fallbackBucket);
+      const fileName = document.file_name || `${document.title}.pdf`;
+
+      if (storageObject) {
+        const { data: file, error: downloadError } = await supabase.storage.from(storageObject.bucket).download(storageObject.path);
+        if (downloadError) throw downloadError;
+
+        prepared.push({
+          attachmentType: "product_document",
+          productDocumentId: document.id,
+          fileName,
+          fileUrl: `${storageObject.bucket}/${storageObject.path}`,
+          brevo: { name: fileName, content: await blobToBase64(file) }
+        });
+      } else if (document.public_url) {
+        prepared.push({
+          attachmentType: "product_document",
+          productDocumentId: document.id,
+          fileName,
+          fileUrl: document.public_url,
+          brevo: { name: fileName, url: document.public_url }
+        });
+      }
+    }
+  }
+
+  const shouldAttachOrderPdf = input.attachments.some((item) => item.type === "order_pdf") && input.orderId;
+  if (shouldAttachOrderPdf && input.orderId) {
+    const pdf = await createOrderPdf(input.orderId, ownerUserId);
+    const fileName = `bon-de-commande-${input.orderId}.pdf`;
+    prepared.push({
+      attachmentType: "order_pdf",
+      fileName,
+      fileUrl: `/api/orders/${input.orderId}/pdf`,
+      brevo: { name: fileName, content: Buffer.from(pdf).toString("base64") }
+    });
+  }
+
+  return prepared;
+}
+
+export async function sendCrmEmail(input: SendEmailInput) {
+  try {
+    const { user, response } = await requireAuthenticatedUser();
+    if (response || !user) return { ok: false, message: "Authentification requise." };
+
+    const brevoApiKey = process.env.BREVO_API_KEY;
+    const senderEmail = parseEmailFrom(process.env.EMAIL_FROM);
+    const senderName = process.env.EMAIL_FROM_NAME ?? "Biolaur CRM";
+
+    if (!brevoApiKey) return { ok: false, message: "BREVO_API_KEY manquant dans .env.local." };
+    if (!senderEmail) return { ok: false, message: "EMAIL_FROM manquant dans .env.local." };
+    if (!input.to || !input.subject) return { ok: false, message: "Destinataire et objet requis." };
+
+    const supabase = createAdminClient();
+    const attachments = await prepareAttachments(supabase, input, user.id);
+
+    const responseBrevo = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "api-key": brevoApiKey,
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      },
+      body: JSON.stringify({
+        sender: { email: senderEmail, name: senderName },
+        to: [{ email: input.to }],
+        subject: input.subject,
+        htmlContent: `<p>${escapeHtml(input.body).replaceAll("\n", "<br />")}</p>`,
+        textContent: input.body,
+        attachment: attachments.map((attachment) => attachment.brevo)
+      })
     });
 
+    const brevoPayload = await responseBrevo.json().catch(() => null);
+    if (!responseBrevo.ok) {
+      return {
+        ok: false,
+        message: "Echec de l'envoi Brevo.",
+        details: brevoPayload
+      };
+    }
+
+    const emailLogId = await insertEmailLog(supabase, input, user.id);
+    await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
+
+    revalidatePath("/emails");
+    return { ok: true, message: "Email envoye et historise.", emailLogId };
+  } catch (error) {
     return {
-      ok: true,
-      mode: "demo",
-      message: "Email simule et historise en mode demo. Configurez RESEND_API_KEY pour l'envoi reel."
+      ok: false,
+      message: error instanceof Error ? error.message : "Envoi email impossible."
     };
   }
-
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      from,
-      to: input.to,
-      subject: input.subject,
-      text: input.body
-    })
-  });
-
-  if (!response.ok) {
-    return { ok: false, message: "L'envoi Resend a echoue." };
-  }
-
-  return { ok: true, mode: "resend", message: "Email envoye et pret a historiser en base." };
 }
