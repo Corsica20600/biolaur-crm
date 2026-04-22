@@ -1,4 +1,4 @@
-import { createAdminClient } from "@/supabase/admin";
+import { createServerSupabaseClient } from "@/supabase/admin";
 import type { PriceList, PriceListItem, Product, ProductCategory } from "@/types/crm";
 
 function toNumber(value: unknown) {
@@ -6,7 +6,7 @@ function toNumber(value: unknown) {
 }
 
 export async function getProductCatalog() {
-  const supabase = createAdminClient();
+  const supabase = createServerSupabaseClient();
 
   const [{ data: categories, error: categoriesError }, { data: products, error: productsError }, { data: priceLists, error: listsError }] =
     await Promise.all([
@@ -88,7 +88,7 @@ export async function getProductCatalog() {
 }
 
 export async function getPriceListCatalog() {
-  const supabase = createAdminClient();
+  const supabase = createServerSupabaseClient();
 
   const { data: lists, error: listsError } = await supabase
     .from("price_lists")
