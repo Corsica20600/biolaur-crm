@@ -14,43 +14,29 @@ type CreateOrderBody = {
 
 type DbRow = Record<string, unknown>;
 
-function mapOrder(row: DbRow, items: DbRow[] = []) {
-  const clients = row.clients as DbRow | undefined;
+function mapOrder(row: DbRow) {
+  const prospectClient = row.prospects_clients as DbRow | undefined;
   return {
     id: String(row.id ?? ""),
-    ownerUserId: String(row.owner_user_id ?? row.owner_id ?? ""),
-    orderNumber: String(row.numero_commande ?? ""),
-    prospectClientId: String(row.client_id ?? ""),
-    clientName: clients ? String(clients.nom_commercial ?? clients.raison_sociale ?? "") : "",
-    orderStatus: String(row.statut ?? ""),
-    orderDate: String(row.date_commande ?? ""),
-    deliveryAddressLine1: String(row.adresse_livraison ?? ""),
-    deliveryPostalCode: "",
-    deliveryCity: "",
-    deliveryCountry: "France",
-    comments: String(row.commentaire ?? ""),
-    subtotalHt: Number(row.total_ht ?? 0),
-    totalVat: Number(row.total_tva ?? 0),
+    ownerUserId: String(row.owner_user_id ?? ""),
+    orderNumber: String(row.order_number ?? ""),
+    prospectClientId: String(row.prospect_client_id ?? ""),
+    clientName: prospectClient ? String(prospectClient.trade_name ?? prospectClient.company_name ?? "") : "",
+    orderStatus: String(row.order_status ?? ""),
+    orderDate: String(row.order_date ?? ""),
+    deliveryAddressLine1: String(row.delivery_address_line_1 ?? ""),
+    deliveryPostalCode: String(row.delivery_postal_code ?? ""),
+    deliveryCity: String(row.delivery_city ?? ""),
+    deliveryCountry: String(row.delivery_country ?? "France"),
+    comments: String(row.comments ?? ""),
+    subtotalHt: Number(row.subtotal_ht ?? 0),
+    totalVat: Number(row.total_vat ?? 0),
     totalTtc: Number(row.total_ttc ?? 0),
-    estimatedCommissionAmount: Number(row.commission_estimee ?? 0),
-    commissionRate: 20,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    items: items.map((item) => ({
-      id: String(item.id ?? ""),
-      orderId: String(item.order_id ?? ""),
-      productId: item.product_id ? String(item.product_id) : undefined,
-      productReference: String(item.reference ?? ""),
-      productName: String(item.designation ?? ""),
-      quantity: Number(item.quantite ?? 0),
-      unitPriceHt: Number(item.prix_unitaire_ht ?? 0),
-      discountPercent: Number(item.remise ?? 0),
-      vatRate: 20,
-      lineTotalHt: Number(item.total_ligne_ht ?? 0),
-      sortOrder: 0,
-      createdAt: String(item.created_at ?? ""),
-      updatedAt: String(item.updated_at ?? "")
-    }))
+    estimatedCommissionAmount: Number(row.estimated_commission_amount ?? 0),
+    commissionRate: Number(row.commission_rate ?? 20),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+    items: []
   };
 }
 
@@ -61,7 +47,7 @@ export async function GET() {
   const supabase = createAdminClient();
   const { data: orderRows, error } = await supabase
     .from("orders")
-    .select("*, clients(raison_sociale,nom_commercial)")
+    .select("*, prospects_clients(company_name,trade_name)")
     .eq("owner_user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -70,17 +56,6 @@ export async function GET() {
   }
 
   return NextResponse.json({ ok: true, orders: (orderRows ?? []).map((row) => mapOrder(row as DbRow)) });
-}
-
-async function createOrderNumber(supabase: ReturnType<typeof createServerSupabaseClient>) {
-  const year = new Date().getFullYear();
-  const { count } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .gte("date_commande", `${year}-01-01`)
-    .lte("date_commande", `${year}-12-31`);
-
-  return `CMD-${year}-${String((count ?? 0) + 1).padStart(4, "0")}`;
 }
 
 export async function POST(request: Request) {
@@ -97,11 +72,11 @@ export async function POST(request: Request) {
     const supabase = createServerSupabaseClient();
 
     const { data: client, error: clientError } = await supabase
-      .from("clients")
-      .select("id,owner_id,owner_user_id,adresse,code_postal,ville,pays,type_fiche")
+      .from("prospects_clients")
+      .select("id,owner_user_id,address_line_1,postal_code,city,country,record_type")
       .eq("id", body.clientId)
       .eq("owner_user_id", user.id)
-      .eq("type_fiche", "client")
+      .eq("record_type", "client")
       .single();
 
     if (clientError || !client) {
@@ -116,7 +91,7 @@ export async function POST(request: Request) {
         .in("id", productIds),
       supabase
         .from("price_list_items")
-        .select("product_id,prix_ht,remise")
+        .select("product_id,unit_price_ht,discount_percent")
         .in("product_id", productIds)
     ]);
 
@@ -131,47 +106,46 @@ export async function POST(request: Request) {
         throw new Error(`Produit introuvable: ${line.productId}`);
       }
       const price = priceItems?.find((item) => item.product_id === line.productId);
-      const unitPrice = Number(price?.prix_ht ?? product.tarif_ht ?? 0);
-      const discount = Number(price?.remise ?? 0);
+      const unitPrice = Number(price?.unit_price_ht ?? product.tarif_ht ?? 0);
+      const discount = Number(price?.discount_percent ?? 0);
       const quantity = Math.max(Number(line.quantity || 1), 1);
       const totalLine = calculateOrderLineTotal(quantity, unitPrice, discount);
 
       return {
-        owner_id: user.id,
-        owner_user_id: user.id,
         product_id: product.id,
-        reference: product.reference,
-        designation: product.nom_produit,
-        quantite: quantity,
-        prix_unitaire_ht: unitPrice,
-        remise: discount,
-        total_ligne_ht: totalLine,
-        vatRate: Number(product.tva ?? 20),
+        product_reference: product.reference,
+        product_name: product.nom_produit,
+        quantity,
+        unit_price_ht: unitPrice,
+        discount_percent: discount,
+        vat_rate: Number(product.tva ?? 20),
+        line_total_ht: totalLine,
         sort_order: index + 1
       };
     });
 
-    const totalHt = orderItems.reduce((sum, item) => sum + item.total_ligne_ht, 0);
-    const totalTva = orderItems.reduce((sum, item) => sum + calculateVat(item.total_ligne_ht, item.vatRate), 0);
-    const orderNumber = await createOrderNumber(supabase);
+    const totalHt = orderItems.reduce((sum, item) => sum + item.line_total_ht, 0);
+    const totalTva = orderItems.reduce((sum, item) => sum + calculateVat(item.line_total_ht, item.vat_rate), 0);
 
     const { data: order, error: orderError } = await supabase
       .from("orders")
       .insert({
-        owner_id: user.id,
         owner_user_id: user.id,
-        numero_commande: orderNumber,
-        client_id: client.id,
-        date_commande: new Date().toISOString().slice(0, 10),
-        statut: "brouillon",
-        adresse_livraison: [client.adresse, client.code_postal, client.ville].filter(Boolean).join(", "),
-        commentaire: body.comments ?? null,
-        total_ht: totalHt,
-        total_tva: totalTva,
+        prospect_client_id: client.id,
+        order_status: "brouillon",
+        order_date: new Date().toISOString().slice(0, 10),
+        delivery_address_line_1: client.address_line_1 ?? null,
+        delivery_postal_code: client.postal_code ?? null,
+        delivery_city: client.city ?? null,
+        delivery_country: client.country ?? "France",
+        comments: body.comments ?? null,
+        subtotal_ht: totalHt,
+        total_vat: totalTva,
         total_ttc: totalHt + totalTva,
-        commission_estimee: totalHt * 0.2
+        estimated_commission_amount: totalHt * 0.2,
+        commission_rate: 20
       })
-      .select("id,numero_commande")
+      .select("id,order_number")
       .single();
 
     if (orderError || !order) {
@@ -179,12 +153,11 @@ export async function POST(request: Request) {
     }
 
     const { error: itemsError } = await supabase.from("order_items").insert(
-      orderItems.map((item) => {
-        const { vatRate, sort_order, ...orderItem } = item;
-        void vatRate;
-        void sort_order;
-        return { ...orderItem, order_id: order.id };
-      })
+      orderItems.map((item) => ({
+        ...item,
+        owner_user_id: user.id,
+        order_id: order.id
+      }))
     );
 
     if (itemsError) {
@@ -192,7 +165,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, orderId: order.id, orderNumber: order.numero_commande });
+    return NextResponse.json({ ok: true, orderId: order.id, orderNumber: order.order_number });
   } catch (error) {
     return NextResponse.json(
       {

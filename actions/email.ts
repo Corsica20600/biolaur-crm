@@ -76,10 +76,10 @@ async function blobToBase64(blob: Blob) {
 }
 
 async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, userId: string) {
-  const clientId = input.clientId ?? input.prospectClientId ?? null;
-  const modernPayload = {
+  const prospectClientId = input.prospectClientId ?? input.clientId ?? null;
+  const payload = {
     owner_user_id: userId,
-    prospect_client_id: clientId,
+    prospect_client_id: prospectClientId,
     order_id: input.orderId || null,
     email_template_id: input.templateId || null,
     recipient_email: input.to,
@@ -89,41 +89,9 @@ async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, in
     sent_at: new Date().toISOString()
   };
 
-  const hybridPayload = {
-    owner_user_id: userId,
-    client_id: clientId,
-    order_id: input.orderId || null,
-    email_template_id: input.templateId || null,
-    recipient_email: input.to,
-    subject: input.subject,
-    body: input.body,
-    send_status: "sent",
-    sent_at: new Date().toISOString()
-  };
-
-  const legacyPayload = {
-    owner_id: userId,
-    owner_user_id: userId,
-    client_id: clientId,
-    order_id: input.orderId || null,
-    template_id: input.templateId || null,
-    to_email: input.to,
-    subject: input.subject,
-    body: input.body,
-    status: "sent",
-    sent_at: new Date().toISOString()
-  };
-
-  const payloads = [modernPayload, hybridPayload, legacyPayload];
-  let lastError = "";
-
-  for (const payload of payloads) {
-    const { data, error } = await supabase.from("email_logs").insert(payload).select("id").single();
-    if (!error && data?.id) return data.id as string;
-    lastError = error?.message ?? "Insertion email_logs impossible.";
-  }
-
-  throw new Error(lastError);
+  const { data, error } = await supabase.from("email_logs").insert(payload).select("id").single();
+  if (!error && data?.id) return data.id as string;
+  throw new Error(error?.message ?? "Insertion email_logs impossible.");
 }
 
 async function insertEmailAttachments(

@@ -12,11 +12,11 @@ export async function GET() {
     const [{ data: clients, error: clientsError }, { data: products, error: productsError }, { data: priceItems, error: pricesError }] =
       await Promise.all([
         supabase
-          .from("clients")
-          .select("id,owner_id,owner_user_id,raison_sociale,nom_commercial,ville,adresse,code_postal,pays,type_fiche")
+          .from("prospects_clients")
+          .select("id,owner_user_id,company_name,trade_name,city,address_line_1,postal_code,country,record_type")
           .eq("owner_user_id", user.id)
-          .eq("type_fiche", "client")
-          .order("raison_sociale"),
+          .eq("record_type", "client")
+          .order("company_name"),
         supabase
           .from("products")
           .select("id,reference,nom_produit,description_courte,conditionnement,tarif_ht,tva,actif")
@@ -24,7 +24,7 @@ export async function GET() {
           .order("reference"),
         supabase
           .from("price_list_items")
-          .select("id,product_id,prix_ht,remise,conditionnement,disponibilite")
+          .select("id,product_id,unit_price_ht,discount_percent,conditioning,is_available")
           .order("created_at")
       ]);
 
@@ -35,9 +35,25 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      clients: clients ?? [],
+      clients: (clients ?? []).map((client) => ({
+        id: client.id,
+        owner_user_id: client.owner_user_id,
+        company_name: client.company_name,
+        trade_name: client.trade_name,
+        city: client.city,
+        address_line_1: client.address_line_1,
+        postal_code: client.postal_code,
+        country: client.country
+      })),
       products: products ?? [],
-      priceItems: priceItems ?? []
+      priceItems: (priceItems ?? []).map((priceItem) => ({
+        id: priceItem.id,
+        product_id: priceItem.product_id,
+        unit_price_ht: priceItem.unit_price_ht,
+        discount_percent: priceItem.discount_percent,
+        conditioning: priceItem.conditioning,
+        is_available: priceItem.is_available
+      }))
     });
   } catch (error) {
     return NextResponse.json(

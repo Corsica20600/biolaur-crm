@@ -8,22 +8,31 @@ import { EmailComposer } from "@/components/emails/email-composer";
 import { OrderItemsTable } from "@/components/orders/order-items-table";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { emailLogs } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import type { EmailLog } from "@/types/crm";
 import type { Order } from "@/types/crm";
 
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const [remoteOrder, setRemoteOrder] = useState<Order | null>(null);
+  const [remoteEmailLogs, setRemoteEmailLogs] = useState<EmailLog[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadRemoteOrder() {
-      const response = await fetch(`/api/orders/${params.id}`, { cache: "no-store" });
+      const [orderResponse, emailsResponse] = await Promise.all([
+        fetch(`/api/orders/${params.id}`, { cache: "no-store" }),
+        fetch("/api/emails/data", { cache: "no-store" })
+      ]);
       setLoading(false);
-      if (!response.ok) return;
-      const payload = (await response.json()) as { ok: boolean; order?: Order };
-      if (payload.ok && payload.order) setRemoteOrder(payload.order);
+      if (orderResponse.ok) {
+        const payload = (await orderResponse.json()) as { ok: boolean; order?: Order };
+        if (payload.ok && payload.order) setRemoteOrder(payload.order);
+      }
+      if (emailsResponse.ok) {
+        const payload = (await emailsResponse.json()) as { ok: boolean; emailLogs?: EmailLog[] };
+        if (payload.ok) setRemoteEmailLogs(payload.emailLogs ?? []);
+      }
     }
 
     loadRemoteOrder();
@@ -47,7 +56,7 @@ export default function OrderDetailPage() {
       </div>
     );
   }
-  const orderEmails = emailLogs.filter((email) => email.orderId === order.id);
+  const orderEmails = remoteEmailLogs.filter((email) => email.orderId === order.id);
 
   return (
     <>

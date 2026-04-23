@@ -3,6 +3,7 @@
 -- Conception: mono-utilisateur au depart via owner_user_id, evolutive multi-utilisateurs.
 
 create extension if not exists "pgcrypto";
+set check_function_bodies = off;
 
 -- ==================================================
 -- Fonctions communes
@@ -682,3 +683,5 @@ on conflict (code) do update set
   subject_template = excluded.subject_template,
   body_template = excluded.body_template,
   is_active = excluded.is_active;
+
+set check_function_bodies = on;

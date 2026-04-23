@@ -7,13 +7,13 @@ import { calculateOrderLineTotal, calculateVat, formatCurrency } from "@/lib/uti
 
 type FormClient = {
   id: string;
-  owner_id: string;
-  raison_sociale: string;
-  nom_commercial: string | null;
-  ville: string | null;
-  adresse: string | null;
-  code_postal: string | null;
-  pays: string | null;
+  owner_user_id: string;
+  company_name: string;
+  trade_name: string | null;
+  city: string | null;
+  address_line_1: string | null;
+  postal_code: string | null;
+  country: string | null;
 };
 
 type FormProduct = {
@@ -29,9 +29,9 @@ type FormProduct = {
 type FormPriceItem = {
   id: string;
   product_id: string;
-  prix_ht: number;
-  remise: number;
-  conditionnement: string | null;
+  unit_price_ht: number;
+  discount_percent: number;
+  conditioning: string | null;
 };
 
 type DraftLine = {
@@ -92,13 +92,13 @@ export function OrderForm() {
       const product = products.find((item) => item.id === line.productId);
       const price = priceItems.find((item) => item.product_id === line.productId);
       if (!product) return sum;
-      return sum + calculateOrderLineTotal(line.quantity, Number(price?.prix_ht ?? product.tarif_ht ?? 0), Number(price?.remise ?? 0));
+      return sum + calculateOrderLineTotal(line.quantity, Number(price?.unit_price_ht ?? product.tarif_ht ?? 0), Number(price?.discount_percent ?? 0));
     }, 0);
     const totalTva = lines.reduce((sum, line) => {
       const product = products.find((item) => item.id === line.productId);
       const price = priceItems.find((item) => item.product_id === line.productId);
       if (!product) return sum;
-      const lineHt = calculateOrderLineTotal(line.quantity, Number(price?.prix_ht ?? product.tarif_ht ?? 0), Number(price?.remise ?? 0));
+      const lineHt = calculateOrderLineTotal(line.quantity, Number(price?.unit_price_ht ?? product.tarif_ht ?? 0), Number(price?.discount_percent ?? 0));
       return sum + calculateVat(lineHt, Number(product.tva ?? 20));
     }, 0);
     return { totalHt, totalTva, totalTtc: totalHt + totalTva, commission: totalHt * 0.2 };
@@ -159,7 +159,7 @@ export function OrderForm() {
         <select value={clientId} onChange={(event) => setClientId(event.target.value)} className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm md:max-w-md">
           {clients.map((client) => (
             <option key={client.id} value={client.id}>
-              {client.raison_sociale} - {client.ville}
+              {client.trade_name ?? client.company_name} - {client.city}
             </option>
           ))}
         </select>
@@ -181,8 +181,8 @@ export function OrderForm() {
           {lines.map((line, index) => {
             const product = products.find((item) => item.id === line.productId) ?? products[0];
             const price = priceItems.find((item) => item.product_id === line.productId);
-            const unitPrice = Number(price?.prix_ht ?? product.tarif_ht ?? 0);
-            const discount = Number(price?.remise ?? 0);
+            const unitPrice = Number(price?.unit_price_ht ?? product.tarif_ht ?? 0);
+            const discount = Number(price?.discount_percent ?? 0);
             const lineTotal = calculateOrderLineTotal(line.quantity, unitPrice, discount);
             return (
               <div key={index} className="grid gap-3 rounded-md border border-line p-3 md:grid-cols-[1fr_110px_120px_120px_44px] md:items-center">

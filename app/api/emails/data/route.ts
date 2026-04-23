@@ -24,8 +24,8 @@ function mapTemplate(row: DbRow) {
 function mapRecipient(row: DbRow) {
   return {
     id: String(row.id ?? ""),
-    label: String(row.nom_commercial ?? row.raison_sociale ?? row.trade_name ?? row.company_name ?? "Client"),
-    companyName: String(row.raison_sociale ?? row.company_name ?? ""),
+    label: String(row.trade_name ?? row.company_name ?? "Client"),
+    companyName: String(row.company_name ?? ""),
     email: String(row.email ?? "")
   };
 }
@@ -33,8 +33,8 @@ function mapRecipient(row: DbRow) {
 function mapOrder(row: DbRow) {
   return {
     id: String(row.id ?? ""),
-    orderNumber: String(row.numero_commande ?? row.order_number ?? row.id ?? ""),
-    clientId: String(row.client_id ?? row.prospect_client_id ?? "")
+    orderNumber: String(row.order_number ?? row.id ?? ""),
+    clientId: String(row.prospect_client_id ?? "")
   };
 }
 
@@ -68,16 +68,16 @@ function mapAttachment(row: DbRow) {
 function mapEmailLog(row: DbRow, attachments: ReturnType<typeof mapAttachment>[]) {
   return {
     id: String(row.id ?? ""),
-    ownerUserId: String(row.owner_user_id ?? row.owner_id ?? ""),
-    prospectClientId: row.prospect_client_id ? String(row.prospect_client_id) : row.client_id ? String(row.client_id) : undefined,
+    ownerUserId: String(row.owner_user_id ?? ""),
+    prospectClientId: row.prospect_client_id ? String(row.prospect_client_id) : undefined,
     orderId: row.order_id ? String(row.order_id) : undefined,
-    emailTemplateId: row.email_template_id ? String(row.email_template_id) : row.template_id ? String(row.template_id) : undefined,
-    recipientEmail: String(row.recipient_email ?? row.to_email ?? ""),
+    emailTemplateId: row.email_template_id ? String(row.email_template_id) : undefined,
+    recipientEmail: String(row.recipient_email ?? ""),
     ccEmail: row.cc_email ? String(row.cc_email) : undefined,
     bccEmail: row.bcc_email ? String(row.bcc_email) : undefined,
     subject: String(row.subject ?? ""),
     body: String(row.body ?? ""),
-    sendStatus: String(row.send_status ?? row.status ?? "sent"),
+    sendStatus: String(row.send_status ?? "sent"),
     sentAt: row.sent_at ? String(row.sent_at) : String(row.created_at ?? ""),
     errorMessage: row.error_message ? String(row.error_message) : undefined,
     createdAt: String(row.created_at ?? ""),
@@ -95,26 +95,22 @@ export async function GET() {
 
     const [
       { data: templates, error: templatesError },
-      clientsResponse,
-      prospectsResponse,
+      { data: recipients, error: recipientsError },
       { data: orders, error: ordersError },
       { data: documents, error: documentsError },
       { data: emailLogs, error: emailLogsError }
     ] = await Promise.all([
       supabase.from("email_templates").select("*").eq("is_active", true).order("name"),
-      supabase.from("clients").select("*").eq("owner_user_id", user.id).order("raison_sociale"),
-      supabase.from("prospects_clients").select("*").eq("owner_user_id", user.id).order("company_name"),
+      supabase.from("prospects_clients").select("id,company_name,trade_name,email").eq("owner_user_id", user.id).order("company_name"),
       supabase.from("orders").select("*").eq("owner_user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("product_documents").select("*, products(*)").order("created_at", { ascending: false }),
       supabase.from("email_logs").select("*").eq("owner_user_id", user.id).order("created_at", { ascending: false })
     ]);
 
-    const error = templatesError ?? ordersError ?? documentsError ?? emailLogsError;
+    const error = templatesError ?? recipientsError ?? ordersError ?? documentsError ?? emailLogsError;
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
-    const clients = clientsResponse.error ? [] : clientsResponse.data ?? [];
-    const prospects = prospectsResponse.error ? [] : prospectsResponse.data ?? [];
-    const recipientRows = clients.length ? clients : prospects;
+    const recipientRows = recipients ?? [];
     const emailLogIds = (emailLogs ?? []).map((log) => log.id);
     const { data: attachments, error: attachmentsError } = emailLogIds.length
       ? await supabase.from("email_log_attachments").select("*").in("email_log_id", emailLogIds)
