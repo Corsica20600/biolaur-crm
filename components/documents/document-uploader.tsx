@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { uploadDocument, type UploadDocumentState } from "@/actions/documents";
 
 const initialState: UploadDocumentState = { ok: false, message: "" };
@@ -20,6 +21,7 @@ export function DocumentUploader({
   productId?: string;
   products?: ProductOption[];
 }) {
+  const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [state, formAction, pending] = useActionState(uploadDocument, initialState);
@@ -32,7 +34,8 @@ export function DocumentUploader({
       const productField = formRef.current.elements.namedItem("productId") as HTMLSelectElement | null;
       if (productField) productField.value = selectedProduct;
     }
-  }, [hasSubmitted, productId, state.ok]);
+    router.refresh();
+  }, [hasSubmitted, productId, router, state.ok]);
 
   return (
     <form

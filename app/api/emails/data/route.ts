@@ -2,81 +2,87 @@ import { NextResponse } from "next/server";
 import { requireAuthenticatedUser } from "@/lib/server-auth";
 import { createAdminClient } from "@/supabase/admin";
 
-function mapTemplate(row: any) {
+type DbRow = Record<string, unknown>;
+
+function asRow(value: unknown): DbRow {
+  return value && typeof value === "object" ? (value as DbRow) : {};
+}
+
+function mapTemplate(row: DbRow) {
   return {
-    id: row.id,
-    code: row.code,
-    name: row.name,
-    subjectTemplate: row.subject_template ?? row.subject ?? "",
-    bodyTemplate: row.body_template ?? row.body ?? "",
-    isActive: row.is_active ?? true,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
+    id: String(row.id ?? ""),
+    code: String(row.code ?? ""),
+    name: String(row.name ?? ""),
+    subjectTemplate: String(row.subject_template ?? row.subject ?? ""),
+    bodyTemplate: String(row.body_template ?? row.body ?? ""),
+    isActive: Boolean(row.is_active ?? true),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? "")
   };
 }
 
-function mapRecipient(row: any) {
+function mapRecipient(row: DbRow) {
   return {
-    id: row.id,
-    label: row.nom_commercial || row.raison_sociale || row.trade_name || row.company_name || "Client",
-    companyName: row.raison_sociale || row.company_name || "",
-    email: row.email || ""
+    id: String(row.id ?? ""),
+    label: String(row.nom_commercial ?? row.raison_sociale ?? row.trade_name ?? row.company_name ?? "Client"),
+    companyName: String(row.raison_sociale ?? row.company_name ?? ""),
+    email: String(row.email ?? "")
   };
 }
 
-function mapOrder(row: any) {
+function mapOrder(row: DbRow) {
   return {
-    id: row.id,
-    orderNumber: row.numero_commande ?? row.order_number ?? row.id,
-    clientId: row.client_id ?? row.prospect_client_id ?? ""
+    id: String(row.id ?? ""),
+    orderNumber: String(row.numero_commande ?? row.order_number ?? row.id ?? ""),
+    clientId: String(row.client_id ?? row.prospect_client_id ?? "")
   };
 }
 
-function mapProductDocument(row: any) {
-  const product = row.products ?? {};
+function mapProductDocument(row: DbRow) {
+  const product = asRow(row.products);
   return {
-    id: row.id,
-    productId: row.product_id,
-    documentType: row.document_type,
-    title: row.title,
-    fileName: row.file_name,
-    storagePath: row.storage_path,
-    publicUrl: row.public_url,
-    productReference: product.reference ?? "",
-    productName: product.nom_produit ?? product.name ?? ""
+    id: String(row.id ?? ""),
+    productId: String(row.product_id ?? ""),
+    documentType: String(row.document_type ?? ""),
+    title: String(row.title ?? ""),
+    fileName: String(row.file_name ?? ""),
+    storagePath: String(row.storage_path ?? ""),
+    publicUrl: String(row.public_url ?? ""),
+    productReference: String(product.reference ?? ""),
+    productName: String(product.nom_produit ?? product.name ?? "")
   };
 }
 
-function mapAttachment(row: any) {
+function mapAttachment(row: DbRow) {
   return {
-    id: row.id,
-    emailLogId: row.email_log_id,
-    attachmentType: row.attachment_type,
-    productDocumentId: row.product_document_id,
-    fileName: row.file_name ?? "",
-    fileUrl: row.file_url ?? "",
-    createdAt: row.created_at
+    id: String(row.id ?? ""),
+    emailLogId: String(row.email_log_id ?? ""),
+    attachmentType: String(row.attachment_type ?? ""),
+    productDocumentId: row.product_document_id ? String(row.product_document_id) : undefined,
+    fileName: String(row.file_name ?? ""),
+    fileUrl: String(row.file_url ?? ""),
+    createdAt: String(row.created_at ?? "")
   };
 }
 
-function mapEmailLog(row: any, attachments: any[]) {
+function mapEmailLog(row: DbRow, attachments: ReturnType<typeof mapAttachment>[]) {
   return {
-    id: row.id,
-    ownerUserId: row.owner_user_id ?? row.owner_id,
-    prospectClientId: row.prospect_client_id ?? row.client_id,
-    orderId: row.order_id,
-    emailTemplateId: row.email_template_id ?? row.template_id,
-    recipientEmail: row.recipient_email ?? row.to_email ?? "",
-    ccEmail: row.cc_email,
-    bccEmail: row.bcc_email,
-    subject: row.subject ?? "",
-    body: row.body ?? "",
-    sendStatus: row.send_status ?? row.status ?? "sent",
-    sentAt: row.sent_at ?? row.created_at,
-    errorMessage: row.error_message,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at ?? row.created_at,
-    attachments: attachments.filter((attachment) => attachment.emailLogId === row.id)
+    id: String(row.id ?? ""),
+    ownerUserId: String(row.owner_user_id ?? row.owner_id ?? ""),
+    prospectClientId: row.prospect_client_id ? String(row.prospect_client_id) : row.client_id ? String(row.client_id) : undefined,
+    orderId: row.order_id ? String(row.order_id) : undefined,
+    emailTemplateId: row.email_template_id ? String(row.email_template_id) : row.template_id ? String(row.template_id) : undefined,
+    recipientEmail: String(row.recipient_email ?? row.to_email ?? ""),
+    ccEmail: row.cc_email ? String(row.cc_email) : undefined,
+    bccEmail: row.bcc_email ? String(row.bcc_email) : undefined,
+    subject: String(row.subject ?? ""),
+    body: String(row.body ?? ""),
+    sendStatus: String(row.send_status ?? row.status ?? "sent"),
+    sentAt: row.sent_at ? String(row.sent_at) : String(row.created_at ?? ""),
+    errorMessage: row.error_message ? String(row.error_message) : undefined,
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? row.created_at ?? ""),
+    attachments: attachments.filter((attachment) => attachment.emailLogId === String(row.id ?? ""))
   };
 }
 
@@ -120,11 +126,11 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
-      templates: (templates ?? []).map(mapTemplate),
-      recipients: recipientRows.map(mapRecipient),
-      orders: (orders ?? []).map(mapOrder),
-      productDocuments: (documents ?? []).map(mapProductDocument),
-      emailLogs: (emailLogs ?? []).map((log) => mapEmailLog(log, mappedAttachments))
+      templates: (templates ?? []).map((row) => mapTemplate(asRow(row))),
+      recipients: recipientRows.map((row) => mapRecipient(asRow(row))),
+      orders: (orders ?? []).map((row) => mapOrder(asRow(row))),
+      productDocuments: (documents ?? []).map((row) => mapProductDocument(asRow(row))),
+      emailLogs: (emailLogs ?? []).map((row) => mapEmailLog(asRow(row), mappedAttachments))
     });
   } catch (error) {
     return NextResponse.json(

@@ -59,7 +59,7 @@ export default function EmailsPage() {
       </div>
       {error ? <p className="mb-4 rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
       {loading ? (
-        <div className="rounded-lg border border-line bg-white p-4 text-sm text-slate-500">Chargement de l'historique email...</div>
+        <div className="rounded-lg border border-line bg-white p-4 text-sm text-slate-500">Chargement de l&apos;historique email...</div>
       ) : (
         <DataTable<EmailLog>
           rows={emailLogs}

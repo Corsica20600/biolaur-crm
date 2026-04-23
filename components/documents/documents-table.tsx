@@ -23,6 +23,15 @@ export function DocumentsTable({
       searchKeys={[(row) => row.title, (row) => row.documentType, (row) => products.find((product) => product.id === row.productId)?.reference]}
       filters={[
         {
+          key: "productId",
+          label: "Produit",
+          value: "",
+          options: products.map((product) => ({
+            label: product.reference,
+            value: product.id
+          }))
+        },
+        {
           key: "documentType",
           label: "Type",
           value: "",

@@ -45,7 +45,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
           Retour catalogue
         </Link>
         <h1 className="text-xl font-semibold text-ink">Impossible de charger le produit</h1>
-        <p className="mt-2 text-sm text-slate-500">Le catalogue est disponible, mais la fiche detail n'a pas pu etre lue.</p>
+        <p className="mt-2 text-sm text-slate-500">Le catalogue est disponible, mais la fiche detail n&apos;a pas pu etre lue.</p>
       </div>
     );
   }

@@ -12,20 +12,23 @@ type CreateOrderBody = {
   }[];
 };
 
-function mapOrder(row: any, items: any[] = []) {
+type DbRow = Record<string, unknown>;
+
+function mapOrder(row: DbRow, items: DbRow[] = []) {
+  const clients = row.clients as DbRow | undefined;
   return {
-    id: row.id,
-    ownerUserId: row.owner_user_id ?? row.owner_id,
-    orderNumber: row.numero_commande,
-    prospectClientId: row.client_id,
-    clientName: row.clients?.nom_commercial || row.clients?.raison_sociale,
-    orderStatus: row.statut,
-    orderDate: row.date_commande,
-    deliveryAddressLine1: row.adresse_livraison ?? "",
+    id: String(row.id ?? ""),
+    ownerUserId: String(row.owner_user_id ?? row.owner_id ?? ""),
+    orderNumber: String(row.numero_commande ?? ""),
+    prospectClientId: String(row.client_id ?? ""),
+    clientName: clients ? String(clients.nom_commercial ?? clients.raison_sociale ?? "") : "",
+    orderStatus: String(row.statut ?? ""),
+    orderDate: String(row.date_commande ?? ""),
+    deliveryAddressLine1: String(row.adresse_livraison ?? ""),
     deliveryPostalCode: "",
     deliveryCity: "",
     deliveryCountry: "France",
-    comments: row.commentaire ?? "",
+    comments: String(row.commentaire ?? ""),
     subtotalHt: Number(row.total_ht ?? 0),
     totalVat: Number(row.total_tva ?? 0),
     totalTtc: Number(row.total_ttc ?? 0),
@@ -34,19 +37,19 @@ function mapOrder(row: any, items: any[] = []) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     items: items.map((item) => ({
-      id: item.id,
-      orderId: item.order_id,
-      productId: item.product_id,
-      productReference: item.reference,
-      productName: item.designation,
+      id: String(item.id ?? ""),
+      orderId: String(item.order_id ?? ""),
+      productId: item.product_id ? String(item.product_id) : undefined,
+      productReference: String(item.reference ?? ""),
+      productName: String(item.designation ?? ""),
       quantity: Number(item.quantite ?? 0),
       unitPriceHt: Number(item.prix_unitaire_ht ?? 0),
       discountPercent: Number(item.remise ?? 0),
       vatRate: 20,
       lineTotalHt: Number(item.total_ligne_ht ?? 0),
       sortOrder: 0,
-      createdAt: item.created_at,
-      updatedAt: item.updated_at
+      createdAt: String(item.created_at ?? ""),
+      updatedAt: String(item.updated_at ?? "")
     }))
   };
 }
@@ -66,7 +69,7 @@ export async function GET() {
     return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, orders: (orderRows ?? []).map((row) => mapOrder(row)) });
+  return NextResponse.json({ ok: true, orders: (orderRows ?? []).map((row) => mapOrder(row as DbRow)) });
 }
 
 async function createOrderNumber(supabase: ReturnType<typeof createServerSupabaseClient>) {
@@ -176,10 +179,12 @@ export async function POST(request: Request) {
     }
 
     const { error: itemsError } = await supabase.from("order_items").insert(
-      orderItems.map(({ vatRate: _vatRate, sort_order: _sortOrder, ...item }) => ({
-        ...item,
-        order_id: order.id
-      }))
+      orderItems.map((item) => {
+        const { vatRate, sort_order, ...orderItem } = item;
+        void vatRate;
+        void sort_order;
+        return { ...orderItem, order_id: order.id };
+      })
     );
 
     if (itemsError) {

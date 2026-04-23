@@ -19,31 +19,70 @@ function resolveStoragePath(value?: string | null) {
   return { bucket, path: pathParts.join("/") };
 }
 
+async function fetchProductDocuments(
+  supabase: Awaited<ReturnType<typeof createClient>>
+) {
+  const preferred = await supabase
+    .from("product_documents")
+    .select("id,product_id,type,file_name,file_path,file_url,created_at,updated_at")
+    .order("created_at", { ascending: false });
+
+  if (!preferred.error) {
+    return {
+      mode: "preferred" as const,
+      rows: preferred.data ?? []
+    };
+  }
+
+  const legacy = await supabase
+    .from("product_documents")
+    .select("id,product_id,document_type,title,file_name,storage_path,public_url,mime_type,created_at,updated_at")
+    .order("created_at", { ascending: false });
+
+  if (legacy.error) {
+    throw new Error(`Chargement documents impossible: ${legacy.error.message}`);
+  }
+
+  return {
+    mode: "legacy" as const,
+    rows: legacy.data ?? []
+  };
+}
+
 export default async function DocumentsPage() {
   const supabase = await createClient();
-  const [{ data: productsRows, error: productsError }, { data: documentRows, error: docsError }] = await Promise.all([
+  const [{ data: productsRows, error: productsError }, documentsResult] = await Promise.all([
     supabase.from("products").select("id,reference,nom_produit").order("nom_produit", { ascending: true }),
-    supabase
-      .from("product_documents")
-      .select("id,product_id,document_type,title,file_name,storage_path,public_url,mime_type,created_at,updated_at")
-      .order("created_at", { ascending: false })
+    fetchProductDocuments(supabase)
   ]);
 
   if (productsError) {
     throw new Error(`Chargement produits impossible: ${productsError.message}`);
   }
-  if (docsError) {
-    throw new Error(`Chargement documents impossible: ${docsError.message}`);
-  }
-
   const products = (productsRows ?? []).map((product) => ({
     id: product.id,
     reference: product.reference,
     name: product.nom_produit
   }));
 
+  const normalizedDocuments =
+    documentsResult.mode === "preferred"
+      ? documentsResult.rows.map((document) => ({
+          id: document.id,
+          product_id: document.product_id,
+          document_type: document.type,
+          title: document.file_name,
+          file_name: document.file_name,
+          storage_path: document.file_path,
+          public_url: document.file_url,
+          mime_type: "application/pdf",
+          created_at: document.created_at,
+          updated_at: document.updated_at
+        }))
+      : documentsResult.rows;
+
   const rows = await Promise.all(
-    (documentRows ?? []).map(async (document) => {
+    normalizedDocuments.map(async (document) => {
       const bucket = resolveBucket(document.document_type ?? "autre");
       const storageObject = resolveStoragePath(document.storage_path);
       const path = storageObject?.bucket ? storageObject.path : document.storage_path ?? "";

@@ -115,7 +115,7 @@ export default function OrderDetailPage() {
             </a>
           </section>
           <section className="rounded-lg border border-line bg-white p-4">
-            <h2 className="mb-3 font-semibold text-ink">Historique d'envoi</h2>
+            <h2 className="mb-3 font-semibold text-ink">Historique d&apos;envoi</h2>
             <div className="space-y-3">
               {orderEmails.map((email) => (
                 <div key={email.id} className="rounded-md border border-line p-3 text-sm">

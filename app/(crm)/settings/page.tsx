@@ -20,23 +20,25 @@ function unknownColumnName(message?: string) {
   );
 }
 
-function mapSettings(row: any): AppSettings {
+type SettingsRow = Record<string, unknown>;
+
+function mapSettings(row: SettingsRow): AppSettings {
   return {
-    id: row.id,
-    ownerUserId: row.owner_user_id ?? row.owner_id,
-    companyName: row.company_name ?? "",
-    senderName: row.sender_name ?? "",
-    senderEmail: row.sender_email ?? "",
-    senderPhone: row.sender_phone ?? "",
-    companyAddress: row.company_address ?? "",
-    logoUrl: row.logo_url ?? "",
+    id: String(row.id ?? ""),
+    ownerUserId: String(row.owner_user_id ?? row.owner_id ?? ""),
+    companyName: String(row.company_name ?? ""),
+    senderName: String(row.sender_name ?? ""),
+    senderEmail: String(row.sender_email ?? ""),
+    senderPhone: String(row.sender_phone ?? ""),
+    companyAddress: String(row.company_address ?? ""),
+    logoUrl: String(row.logo_url ?? ""),
     defaultCommissionRate: Number(row.default_commission_rate ?? 20),
     defaultVatRate: Number(row.default_vat_rate ?? 20),
-    clientCategories: row.client_categories ?? "CHR, collectivite, commerce de bouche, autre",
-    productCategories: row.product_categories ?? "Entretien, Vaisselle, Sanitaires, Technique, Ouate",
-    currency: row.currency ?? "EUR",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
+    clientCategories: String(row.client_categories ?? "CHR, collectivite, commerce de bouche, autre"),
+    productCategories: String(row.product_categories ?? "Entretien, Vaisselle, Sanitaires, Technique, Ouate"),
+    currency: String(row.currency ?? "EUR"),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? "")
   };
 }
 

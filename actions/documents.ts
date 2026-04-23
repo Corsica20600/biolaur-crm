@@ -8,6 +8,11 @@ export type UploadDocumentState = {
   message: string;
 };
 
+type SupabaseInsertError = {
+  code?: string;
+  message?: string;
+};
+
 function normalizeDocumentType(value: string) {
   if (value === "fiche_technique") return "fiche_technique";
   if (value === "fiche_securite") return "fiche_securite";
@@ -24,6 +29,12 @@ function resolveBucket(type: string) {
 
 function sanitizeFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9._-]+/g, "-");
+}
+
+function isMissingColumnError(error: SupabaseInsertError | null) {
+  if (!error) return false;
+  const message = `${error.code ?? ""} ${error.message ?? ""}`.toLowerCase();
+  return message.includes("column") && (message.includes("does not exist") || message.includes("could not find"));
 }
 
 export async function uploadDocument(_previousState: UploadDocumentState, formData: FormData): Promise<UploadDocumentState> {
@@ -64,16 +75,29 @@ export async function uploadDocument(_previousState: UploadDocumentState, formDa
 
   const { data: publicUrlData } = supabase.storage.from(bucket).getPublicUrl(path);
   const fileUrl = publicUrlData.publicUrl;
-  const { error: insertError } = await supabase.from("product_documents").insert({
+  const filePath = `${bucket}/${path}`;
+
+  const preferredInsert = await supabase.from("product_documents").insert({
     product_id: productId,
-    document_type: type,
-    title: file.name,
+    type,
     file_name: file.name,
-    storage_path: `${bucket}/${path}`,
-    public_url: fileUrl,
-    mime_type: file.type || "application/octet-stream"
+    file_path: filePath,
+    file_url: fileUrl
   });
 
+  const legacyInsert = isMissingColumnError(preferredInsert.error)
+    ? await supabase.from("product_documents").insert({
+        product_id: productId,
+        document_type: type,
+        title: file.name,
+        file_name: file.name,
+        storage_path: filePath,
+        public_url: fileUrl,
+        mime_type: file.type || "application/octet-stream"
+      })
+    : null;
+
+  const insertError = legacyInsert?.error ?? preferredInsert.error;
   if (insertError) {
     return { ok: false, message: insertError.message };
   }
