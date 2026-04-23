@@ -326,6 +326,51 @@ create table if not exists public.commercial_actions (
   updated_at timestamptz default now()
 );
 
+-- Compatibilite: si la table commercial_actions existe deja sans action_type.
+alter table if exists public.commercial_actions
+  add column if not exists action_type text;
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'commercial_actions'
+      and column_name = 'type'
+  ) then
+    execute '
+      update public.commercial_actions
+      set action_type = coalesce(action_type, type)
+      where action_type is null
+    ';
+  end if;
+end;
+$$;
+
+update public.commercial_actions
+set action_type = 'appel'
+where action_type is null
+   or action_type not in ('appel','visite','relance','email','rendez_vous','note');
+
+alter table if exists public.commercial_actions
+  alter column action_type set not null;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'commercial_actions_action_type_check'
+      and conrelid = 'public.commercial_actions'::regclass
+  ) then
+    alter table public.commercial_actions
+      add constraint commercial_actions_action_type_check
+      check (action_type in ('appel','visite','relance','email','rendez_vous','note'));
+  end if;
+end;
+$$;
+
 create table if not exists public.email_templates (
   id uuid primary key default gen_random_uuid(),
   code text unique not null,

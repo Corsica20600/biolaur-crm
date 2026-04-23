@@ -1,19 +1,32 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import { CrmTable } from "@/app/(crm)/crm/crm-table";
 import { PageHeader } from "@/components/page-header";
-import { DataTable } from "@/components/ui/data-table";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { formatDate } from "@/lib/utils";
 import { createClient } from "@/supabase/server";
 import type { ProspectClient } from "@/types/crm";
 
+type QueryResult = { data: Record<string, unknown>[] | null; error: { message: string } | null };
+
+function isMissingRelation(message: string, relation: string) {
+  return message.includes(`relation "${relation}" does not exist`) || message.includes(`Could not find the table '${relation}'`);
+}
+
+function isMissingColumn(message: string, column: string) {
+  return message.includes(`column "${column}" does not exist`) || message.includes(`Could not find the '${column}' column`);
+}
+
 function mapProspectClient(row: Record<string, unknown>): ProspectClient {
+  const companyName = String(row.company_name ?? row.name ?? "");
+  const tradeName = String(row.trade_name ?? row.tradeName ?? row.name ?? companyName);
+  const contactFirstName = String(row.contact_first_name ?? row.first_name ?? "");
+  const contactLastName = String(row.contact_last_name ?? row.last_name ?? "");
+
   return {
     id: String(row.id ?? ""),
-    ownerUserId: String(row.owner_user_id ?? ""),
-    recordType: row.record_type === "client" ? "client" : "prospect",
-    companyName: String(row.company_name ?? ""),
-    tradeName: String(row.trade_name ?? row.company_name ?? ""),
+    ownerUserId: String(row.owner_user_id ?? row.owner_id ?? ""),
+    recordType: row.record_type === "client" || row.type === "client" ? "client" : "prospect",
+    companyName,
+    tradeName,
     clientType:
       row.client_type === "collectivite" || row.client_type === "commerce_de_bouche" || row.client_type === "autre"
         ? row.client_type
@@ -29,9 +42,9 @@ function mapProspectClient(row: Record<string, unknown>): ProspectClient {
         : "a_prospecter",
     siret: String(row.siret ?? ""),
     vatNumber: row.vat_number ? String(row.vat_number) : undefined,
-    contactFirstName: String(row.contact_first_name ?? ""),
-    contactLastName: String(row.contact_last_name ?? ""),
-    contactJobTitle: String(row.contact_job_title ?? ""),
+    contactFirstName,
+    contactLastName,
+    contactJobTitle: String(row.contact_job_title ?? row.job_title ?? ""),
     phone: String(row.phone ?? ""),
     mobile: String(row.mobile ?? ""),
     email: String(row.email ?? ""),
@@ -50,18 +63,50 @@ function mapProspectClient(row: Record<string, unknown>): ProspectClient {
   };
 }
 
+async function fetchCrmRows(supabase: Awaited<ReturnType<typeof createClient>>): Promise<QueryResult> {
+  const primary = await supabase.from("prospects_clients").select("*").order("updated_at", { ascending: false });
+  if (!primary.error) {
+    return { data: (primary.data ?? []) as Record<string, unknown>[], error: null };
+  }
+
+  if (isMissingColumn(primary.error.message, "updated_at")) {
+    const noSort = await supabase.from("prospects_clients").select("*").order("created_at", { ascending: false });
+    if (!noSort.error) {
+      return { data: (noSort.data ?? []) as Record<string, unknown>[], error: null };
+    }
+  }
+
+  if (!isMissingRelation(primary.error.message, "prospects_clients")) {
+    return { data: null, error: { message: primary.error.message } };
+  }
+
+  const legacy = await supabase.from("clients").select("*").order("updated_at", { ascending: false });
+  if (!legacy.error) {
+    return { data: (legacy.data ?? []) as Record<string, unknown>[], error: null };
+  }
+
+  if (isMissingColumn(legacy.error.message, "updated_at")) {
+    const legacyNoSort = await supabase.from("clients").select("*").order("created_at", { ascending: false });
+    if (!legacyNoSort.error) {
+      return { data: (legacyNoSort.data ?? []) as Record<string, unknown>[], error: null };
+    }
+  }
+
+  return {
+    data: null,
+    error: { message: `${primary.error.message} | fallback clients: ${legacy.error.message}` }
+  };
+}
+
 export default async function CrmPage() {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("prospects_clients")
-    .select("*")
-    .order("updated_at", { ascending: false });
+  const { data, error } = await fetchCrmRows(supabase);
 
   if (error) {
     throw new Error(`Chargement CRM impossible: ${error.message}`);
   }
 
-  const rows = (data ?? []).map((row) => mapProspectClient(row as Record<string, unknown>));
+  const rows = (data ?? []).map((row) => mapProspectClient(row));
   const cityOptions = Array.from(new Set(rows.map((row) => row.city).filter(Boolean))).map((city) => ({ label: city, value: city }));
 
   return (
@@ -82,46 +127,7 @@ export default async function CrmPage() {
           </>
         }
       />
-      <DataTable<ProspectClient>
-        rows={rows}
-        searchPlaceholder="Rechercher société, enseigne, ville, contact..."
-        searchKeys={[(row) => row.companyName, (row) => row.tradeName, (row) => row.email, (row) => row.city, (row) => row.contactLastName]}
-        filters={[
-          { key: "recordType", label: "Type fiche", value: "", options: [{ label: "Prospect", value: "prospect" }, { label: "Client", value: "client" }] },
-          { key: "commercialStatus", label: "Statut", value: "", options: [{ label: "A prospecter", value: "a_prospecter" }, { label: "En cours", value: "en_cours" }, { label: "Relance", value: "relance" }, { label: "Actif", value: "actif" }, { label: "Perdu", value: "perdu" }] },
-          { key: "clientType", label: "Type client", value: "", options: [{ label: "CHR", value: "CHR" }, { label: "Collectivite", value: "collectivite" }, { label: "Commerce de bouche", value: "commerce_de_bouche" }] },
-          { key: "city", label: "Ville", value: "", options: cityOptions }
-        ]}
-        columns={[
-          {
-            key: "companyName",
-            header: "Societe",
-            sortable: true,
-            render: (row) => (
-              <Link href={`/crm/${row.id}`} className="font-medium text-ink hover:text-leaf">
-                {row.tradeName}
-                <span className="block text-xs font-normal text-slate-500">{row.companyName}</span>
-              </Link>
-            )
-          },
-          { key: "recordType", header: "Type", render: (row) => <StatusBadge status={row.recordType} /> },
-          { key: "clientType", header: "Clientele", sortable: true },
-          { key: "city", header: "Ville", sortable: true },
-          { key: "contactLastName", header: "Contact", render: (row) => `${row.contactFirstName} ${row.contactLastName}` },
-          { key: "commercialStatus", header: "Statut", render: (row) => <StatusBadge status={row.commercialStatus} /> },
-          { key: "nextFollowUpAt", header: "Relance", sortable: true, render: (row) => formatDate(row.nextFollowUpAt) },
-          {
-            key: "convert",
-            header: "Action",
-            render: (row) =>
-              row.recordType === "prospect" ? (
-                <button className="focus-ring rounded-md border border-line px-3 py-1.5 text-xs font-medium text-leaf">Transformer</button>
-              ) : (
-                <Link href="/orders/new" className="focus-ring rounded-md border border-line px-3 py-1.5 text-xs font-medium text-leaf">Commander</Link>
-              )
-          }
-        ]}
-      />
+      <CrmTable rows={rows} cityOptions={cityOptions} />
     </>
   );
 }
