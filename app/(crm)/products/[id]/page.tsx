@@ -11,6 +11,13 @@ function toNumber(value: unknown) {
   return Number(value ?? 0);
 }
 
+function resolveDocumentBucket(type: string) {
+  if (type === "fiche_technique") return "technical-sheets";
+  if (type === "fiche_securite") return "safety-sheets";
+  if (type === "bon_commande") return "order-pdfs";
+  return "client-documents";
+}
+
 export default async function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = createServerSupabaseClient();
@@ -93,7 +100,7 @@ export default async function ProductDetailPage({ params }: { params: Promise<{ 
       title: doc.title,
       fileName: doc.file_name ?? "",
       storagePath: doc.storage_path ?? "",
-      publicUrl: (await createSignedStorageUrl(supabase, doc.storage_path ?? doc.public_url, doc.document_type === "fiche_securite" ? "safety-sheets" : "technical-sheets")) || doc.public_url || "",
+      publicUrl: (await createSignedStorageUrl(supabase, doc.storage_path ?? doc.public_url, resolveDocumentBucket(doc.document_type))) || doc.public_url || "",
       mimeType: doc.mime_type ?? "",
       createdAt: doc.created_at,
       updatedAt: doc.updated_at

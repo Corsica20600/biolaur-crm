@@ -7,11 +7,20 @@ import { ClientForm } from "@/components/forms/client-form";
 import { OrderItemsTable } from "@/components/orders/order-items-table";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { commercialActions, emailLogs, orders, productDocuments, prospectsClients } from "@/lib/demo-data";
+import { commercialActions, emailLogs, orders, prospectsClients } from "@/lib/demo-data";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import { createClient } from "@/supabase/server";
 
 export default async function CrmDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const supabase = await createClient();
+  const { data: productsRows } = await supabase.from("products").select("id,reference,nom_produit").order("nom_produit", { ascending: true });
+  const { data: latestDocumentRows } = await supabase
+    .from("product_documents")
+    .select("id,title,document_type,public_url")
+    .order("created_at", { ascending: false })
+    .limit(4);
+  const productOptions = (productsRows ?? []).map((product) => ({ id: product.id, reference: product.reference, name: product.nom_produit }));
   const record = prospectsClients.find((item) => item.id === id) ?? prospectsClients[0];
   const recordOrders = orders.filter((order) => order.prospectClientId === record.id);
   const recordActions = commercialActions.filter((action) => action.prospectClientId === record.id);
@@ -114,12 +123,12 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
           <section className="space-y-3">
             <h2 className="font-semibold text-ink">Emails et documents</h2>
             <EmailComposer prospectClientId={record.id} />
-            <DocumentUploader prospectClientId={record.id} />
+            <DocumentUploader prospectClientId={record.id} products={productOptions} />
             <div className="grid gap-3 md:grid-cols-2">
-              {productDocuments.slice(0, 4).map((doc) => (
-                <a key={doc.id} href={doc.publicUrl} className="rounded-md border border-line bg-white p-3 text-sm hover:bg-slate-50">
+              {(latestDocumentRows ?? []).map((doc) => (
+                <a key={doc.id} href={doc.public_url ?? "#"} className="rounded-md border border-line bg-white p-3 text-sm hover:bg-slate-50">
                   <span className="font-medium text-ink">{doc.title}</span>
-                  <span className="block text-xs text-slate-500">{doc.documentType}</span>
+                  <span className="block text-xs text-slate-500">{doc.document_type}</span>
                 </a>
               ))}
             </div>

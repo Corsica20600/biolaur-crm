@@ -231,7 +231,7 @@ create table if not exists public.products (
 create table if not exists public.product_documents (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references public.products(id) on delete cascade,
-  document_type text check (document_type in ('fiche_technique','fiche_securite','plaquette','autre')),
+  document_type text check (document_type in ('fiche_technique','fiche_securite','bon_commande','plaquette','autre')),
   title text not null,
   file_name text,
   storage_path text,

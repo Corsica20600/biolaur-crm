@@ -507,7 +507,10 @@ create policy "catalog_product_documents_read_authenticated" on public.product_d
 using (
   exists (select 1 from public.products p where p.id = product_documents.product_id and (p.actif = true or public.is_admin()))
 );
-create policy "catalog_product_documents_admin_insert" on public.product_documents for insert to authenticated with check (public.is_admin());
+create policy "catalog_product_documents_insert_authenticated" on public.product_documents for insert to authenticated
+with check (
+  exists (select 1 from public.products p where p.id = product_documents.product_id and (p.actif = true or public.is_admin()))
+);
 create policy "catalog_product_documents_admin_update" on public.product_documents for update to authenticated using (public.is_admin()) with check (public.is_admin());
 create policy "catalog_product_documents_admin_delete" on public.product_documents for delete to authenticated using (public.is_admin());
 
@@ -542,6 +545,7 @@ on conflict (id) do update set public = false;
 
 drop policy if exists "biolaur_catalog_storage_read_authenticated" on storage.objects;
 drop policy if exists "biolaur_catalog_storage_admin_insert" on storage.objects;
+drop policy if exists "biolaur_catalog_storage_insert_authenticated" on storage.objects;
 drop policy if exists "biolaur_catalog_storage_admin_update" on storage.objects;
 drop policy if exists "biolaur_catalog_storage_admin_delete" on storage.objects;
 drop policy if exists "biolaur_owned_storage_read" on storage.objects;
@@ -553,9 +557,9 @@ create policy "biolaur_catalog_storage_read_authenticated"
 on storage.objects for select to authenticated
 using (bucket_id in ('technical-sheets', 'safety-sheets'));
 
-create policy "biolaur_catalog_storage_admin_insert"
+create policy "biolaur_catalog_storage_insert_authenticated"
 on storage.objects for insert to authenticated
-with check (bucket_id in ('technical-sheets', 'safety-sheets') and public.is_admin());
+with check (bucket_id in ('technical-sheets', 'safety-sheets'));
 
 create policy "biolaur_catalog_storage_admin_update"
 on storage.objects for update to authenticated
