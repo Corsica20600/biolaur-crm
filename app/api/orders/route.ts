@@ -314,6 +314,7 @@ export async function POST(request: Request) {
       remise_percent: item.discount_percent,
       product_name: item.product_name,
       nom_produit: item.product_name,
+      designation: item.product_name,
       product_reference: item.product_reference,
       reference: item.product_reference,
       sort_order: item.sort_order,
