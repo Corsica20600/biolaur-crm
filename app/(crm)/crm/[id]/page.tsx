@@ -10,7 +10,7 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { createClient } from "@/supabase/server";
-import type { ActionStatus, CommercialAction, EmailLog, Order, OrderItem, ProspectClient } from "@/types/crm";
+import type { ActionStatus, CommercialAction, CommercialActionRow, EmailLog, Order, OrderItem, ProspectClient } from "@/types/crm";
 
 type HistoryEvent = {
   id: string;
@@ -20,13 +20,6 @@ type HistoryEvent = {
   details?: string;
   status?: ActionStatus | Order["orderStatus"] | EmailLog["sendStatus"];
 };
-
-function toActionType(value: unknown): CommercialAction["actionType"] | undefined {
-  if (value === "appel" || value === "visite" || value === "relance" || value === "email" || value === "rendez_vous" || value === "note") {
-    return value;
-  }
-  return undefined;
-}
 
 function mapProspectClient(row: Record<string, unknown>): ProspectClient {
   return {
@@ -71,25 +64,28 @@ function mapProspectClient(row: Record<string, unknown>): ProspectClient {
   };
 }
 
-function mapAction(row: Record<string, unknown>): CommercialAction {
+function mapAction(row: CommercialActionRow): CommercialAction {
+  const actionType = row.action_type ?? row.type;
+  const actionStatus = row.statut;
+
   return {
-    id: String(row.id ?? ""),
-    ownerUserId: String(row.owner_user_id ?? ""),
+    id: String(row.id),
+    ownerUserId: String(row.owner_user_id),
     prospectClientId: String(row.prospect_client_id ?? ""),
     actionType:
-      row.action_type === "visite" ||
-      row.action_type === "relance" ||
-      row.action_type === "email" ||
-      row.action_type === "rendez_vous" ||
-      row.action_type === "note"
-        ? row.action_type
+      actionType === "visite" ||
+      actionType === "relance" ||
+      actionType === "email" ||
+      actionType === "rendez_vous" ||
+      actionType === "note"
+        ? actionType
         : "appel",
-    actionStatus: row.action_status === "fait" || row.action_status === "annule" ? row.action_status : "a_faire",
-    actionDate: String(row.action_date ?? row.created_at ?? ""),
-    summary: String(row.summary ?? ""),
-    details: row.details ? String(row.details) : undefined,
-    nextActionType: toActionType(row.next_action_type),
-    nextActionDate: row.next_action_date ? String(row.next_action_date) : undefined,
+    actionStatus: actionStatus === "fait" || actionStatus === "annule" ? actionStatus : "a_faire",
+    actionDate: String(row.date_action ?? row.created_at ?? ""),
+    summary: String(row.compte_rendu ?? ""),
+    details: row.prochaine_action ? String(row.prochaine_action) : undefined,
+    nextActionType: undefined,
+    nextActionDate: row.date_prochaine_action ? String(row.date_prochaine_action) : undefined,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? "")
   };
@@ -208,7 +204,7 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
 
   const record = mapProspectClient(recordRow as Record<string, unknown>);
   const productOptions = (productsRows ?? []).map((product) => ({ id: String(product.id), reference: String(product.reference), name: String(product.nom_produit) }));
-  const actions = (actionRows ?? []).map((row) => mapAction(row as Record<string, unknown>));
+  const actions = (actionRows ?? []).map((row) => mapAction(row as CommercialActionRow));
 
   const emailIds = (emailRows ?? []).map((row) => String(row.id));
   const { data: attachmentRows } = emailIds.length

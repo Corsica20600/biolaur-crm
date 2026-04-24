@@ -14,6 +14,18 @@ export type CreateCommercialActionState = {
   message: string;
 };
 
+type CommercialActionInsertPayload = {
+  owner_user_id: string;
+  prospect_client_id: string;
+  action_type: string;
+  type: string;
+  statut: string;
+  date_action: string;
+  compte_rendu: string;
+  prochaine_action: string | null;
+  date_prochaine_action: string | null;
+};
+
 function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
 }
@@ -110,18 +122,22 @@ export async function createCommercialAction(
 
   const actionDate = clean(formData.get("actionDate"));
   const nextActionDate = clean(formData.get("nextActionDate"));
+  const actionType = clean(formData.get("actionType")) || "appel";
+  const actionStatus = clean(formData.get("actionStatus")) || "a_faire";
 
-  const { error } = await supabase.from("commercial_actions").insert({
+  const payload: CommercialActionInsertPayload = {
     owner_user_id: user.id,
     prospect_client_id: prospectClientId,
-    action_type: clean(formData.get("actionType")) || "appel",
-    action_status: clean(formData.get("actionStatus")) || "a_faire",
-    action_date: actionDate || new Date().toISOString(),
-    summary,
-    details: clean(formData.get("details")) || null,
-    next_action_type: clean(formData.get("nextActionType")) || null,
-    next_action_date: nextActionDate || null
-  });
+    action_type: actionType,
+    type: actionType,
+    statut: actionStatus,
+    date_action: actionDate || new Date().toISOString(),
+    compte_rendu: summary,
+    prochaine_action: clean(formData.get("details")) || null,
+    date_prochaine_action: nextActionDate || null
+  };
+
+  const { error } = await supabase.from("commercial_actions").insert(payload);
 
   if (error) {
     return { ok: false, message: error.message };

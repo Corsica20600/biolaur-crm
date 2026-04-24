@@ -200,6 +200,21 @@ export interface CommercialAction {
   updatedAt: string;
 }
 
+export interface CommercialActionRow {
+  id: string;
+  owner_user_id: string;
+  prospect_client_id?: string | null;
+  action_type?: string | null;
+  type?: string | null;
+  statut?: string | null;
+  date_action?: string | null;
+  compte_rendu?: string | null;
+  prochaine_action?: string | null;
+  date_prochaine_action?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface EmailTemplate {
   id: string;
   code: "send_technical_sheet" | "send_order" | "send_account_opening" | "send_sales_pack";
