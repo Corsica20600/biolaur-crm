@@ -15,24 +15,95 @@ type CreateOrderBody = {
 
 type DbRow = Record<string, unknown>;
 
+function extractMissingColumn(message: string) {
+  const match =
+    message.match(/Could not find the '([^']+)' column/i) ??
+    message.match(/column ["']?([a-zA-Z0-9_]+)["']? .* does not exist/i);
+  return match?.[1];
+}
+
+function readOrderField(row: DbRow, canonical: string, legacy?: string) {
+  if (row[canonical] !== undefined && row[canonical] !== null) return row[canonical];
+  if (legacy && row[legacy] !== undefined && row[legacy] !== null) return row[legacy];
+  return undefined;
+}
+
+function parseOrderSequence(value: unknown, year: number) {
+  const text = String(value ?? "");
+  const match = text.match(new RegExp(`^CMD-${year}-([0-9]+)$`));
+  return match ? Number(match[1]) : 0;
+}
+
+async function generateOrderNumber(supabase: ReturnType<typeof createServerSupabaseClient>, ownerUserId: string, orderDate: string) {
+  const year = Number(orderDate.slice(0, 4)) || new Date().getUTCFullYear();
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("owner_user_id", ownerUserId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const maxSequence = (data ?? []).reduce((max, row) => {
+    const typedRow = row as DbRow;
+    const candidate = Math.max(
+      parseOrderSequence(readOrderField(typedRow, "order_number", "numero_commande"), year),
+      parseOrderSequence(readOrderField(typedRow, "numero_commande", "order_number"), year)
+    );
+    return candidate > max ? candidate : max;
+  }, 0);
+
+  return `CMD-${year}-${String(maxSequence + 1).padStart(4, "0")}`;
+}
+
+async function insertOrderWithCompatPayload(
+  supabase: ReturnType<typeof createServerSupabaseClient>,
+  payload: Record<string, unknown>
+) {
+  const workingPayload: Record<string, unknown> = { ...payload };
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const { data, error } = await supabase.from("orders").insert(workingPayload).select("*").single();
+    if (!error && data) {
+      return { data: data as DbRow, error: null as null };
+    }
+
+    const message = error?.message ?? "Creation commande impossible.";
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+      delete workingPayload[missingColumn];
+      continue;
+    }
+
+    return { data: null, error };
+  }
+
+  return { data: null, error: { message: "Creation commande impossible: compatibilite schema epuisee." } };
+}
+
 function mapOrder(row: DbRow, prospectClient?: DbRow) {
+  const prospectClientId = String(readOrderField(row, "prospect_client_id", "client_id") ?? "");
+
   return {
     id: String(row.id ?? ""),
     ownerUserId: String(row.owner_user_id ?? ""),
-    orderNumber: String(row.order_number ?? ""),
-    prospectClientId: String(row.prospect_client_id ?? ""),
+    orderNumber: String(readOrderField(row, "order_number", "numero_commande") ?? ""),
+    prospectClientId,
     clientName: prospectClient ? String(prospectClient.trade_name ?? prospectClient.company_name ?? "") : "",
-    orderStatus: String(row.order_status ?? ""),
-    orderDate: String(row.order_date ?? ""),
-    deliveryAddressLine1: String(row.delivery_address_line_1 ?? ""),
+    orderStatus: String(readOrderField(row, "order_status", "statut") ?? ""),
+    orderDate: String(readOrderField(row, "order_date", "date_commande") ?? ""),
+    deliveryAddressLine1: String(readOrderField(row, "delivery_address_line_1", "adresse_livraison") ?? ""),
     deliveryPostalCode: String(row.delivery_postal_code ?? ""),
     deliveryCity: String(row.delivery_city ?? ""),
     deliveryCountry: String(row.delivery_country ?? "France"),
-    comments: String(row.comments ?? ""),
-    subtotalHt: Number(row.subtotal_ht ?? 0),
-    totalVat: Number(row.total_vat ?? 0),
+    comments: String(readOrderField(row, "comments", "commentaire") ?? ""),
+    subtotalHt: Number(readOrderField(row, "subtotal_ht", "total_ht") ?? 0),
+    totalVat: Number(readOrderField(row, "total_vat", "total_tva") ?? 0),
     totalTtc: Number(row.total_ttc ?? 0),
-    estimatedCommissionAmount: Number(row.estimated_commission_amount ?? 0),
+    estimatedCommissionAmount: Number(readOrderField(row, "estimated_commission_amount", "commission_estimee") ?? 0),
     commissionRate: Number(row.commission_rate ?? 20),
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? ""),
@@ -57,7 +128,7 @@ export async function GET() {
 
   const orders = (orderRows ?? []) as DbRow[];
   const prospectClientIds = Array.from(
-    new Set(orders.map((row) => String(row.prospect_client_id ?? "")).filter((id) => id.length > 0))
+    new Set(orders.map((row) => String(readOrderField(row, "prospect_client_id", "client_id") ?? "")).filter((id) => id.length > 0))
   );
 
   const { data: prospectClientRows, error: prospectClientsError } = prospectClientIds.length
@@ -75,7 +146,10 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
-    orders: orders.map((row) => mapOrder(row, prospectClientById.get(String(row.prospect_client_id ?? ""))))
+    orders: orders.map((row) => {
+      const prospectClientId = String(readOrderField(row, "prospect_client_id", "client_id") ?? "");
+      return mapOrder(row, prospectClientById.get(prospectClientId));
+    })
   });
 }
 
@@ -150,26 +224,37 @@ export async function POST(request: Request) {
     const totalHt = orderItems.reduce((sum, item) => sum + item.line_total_ht, 0);
     const totalTva = orderItems.reduce((sum, item) => sum + calculateVat(item.line_total_ht, item.vat_rate), 0);
 
-    const { data: order, error: orderError } = await supabase
-      .from("orders")
-      .insert({
-        owner_user_id: user.id,
-        prospect_client_id: client.id,
-        order_status: "brouillon",
-        order_date: new Date().toISOString().slice(0, 10),
-        delivery_address_line_1: client.address_line_1 ?? null,
-        delivery_postal_code: client.postal_code ?? null,
-        delivery_city: client.city ?? null,
-        delivery_country: client.country ?? "France",
-        comments: body.comments ?? null,
-        subtotal_ht: totalHt,
-        total_vat: totalTva,
-        total_ttc: totalHt + totalTva,
-        estimated_commission_amount: totalHt * 0.2,
-        commission_rate: 20
-      })
-      .select("id,order_number")
-      .single();
+    const orderDate = new Date().toISOString().slice(0, 10);
+    const generatedOrderNumber = await generateOrderNumber(supabase, user.id, orderDate);
+    const orderPayload: Record<string, unknown> = {
+      owner_user_id: user.id,
+      owner_id: user.id,
+      prospect_client_id: client.id,
+      client_id: client.id,
+      order_number: generatedOrderNumber,
+      numero_commande: generatedOrderNumber,
+      order_status: "brouillon",
+      statut: "brouillon",
+      order_date: orderDate,
+      date_commande: orderDate,
+      delivery_address_line_1: client.address_line_1 ?? null,
+      adresse_livraison: client.address_line_1 ?? null,
+      delivery_postal_code: client.postal_code ?? null,
+      delivery_city: client.city ?? null,
+      delivery_country: client.country ?? "France",
+      comments: body.comments ?? null,
+      commentaire: body.comments ?? null,
+      subtotal_ht: totalHt,
+      total_ht: totalHt,
+      total_vat: totalTva,
+      total_tva: totalTva,
+      total_ttc: totalHt + totalTva,
+      estimated_commission_amount: totalHt * 0.2,
+      commission_estimee: totalHt * 0.2,
+      commission_rate: 20
+    };
+
+    const { data: order, error: orderError } = await insertOrderWithCompatPayload(supabase, orderPayload);
 
     if (orderError || !order) {
       return NextResponse.json({ ok: false, error: orderError?.message ?? "Creation commande impossible." }, { status: 500 });
@@ -190,8 +275,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
-      orderId: order.id,
-      orderNumber: order.order_number,
+      orderId: String(order.id ?? ""),
+      orderNumber: String(readOrderField(order, "order_number", "numero_commande") ?? generatedOrderNumber),
       prospectClientId: client.id,
       clientId: client.id
     });

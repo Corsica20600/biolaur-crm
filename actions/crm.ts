@@ -148,3 +148,35 @@ export async function createCommercialAction(
 
   return { ok: true, message: "Action commerciale ajoutee." };
 }
+
+export async function convertProspectToClient(formData: FormData): Promise<void> {
+  const prospectClientId = clean(formData.get("prospectClientId"));
+  if (!prospectClientId) {
+    return;
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError
+  } = await supabase.auth.getUser();
+  if (userError || !user) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("prospects_clients")
+    .update({
+      record_type: "client",
+      commercial_status: "actif",
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", prospectClientId)
+    .eq("owner_user_id", user.id);
+
+  if (error) return;
+
+  revalidatePath("/crm");
+  revalidatePath(`/crm/${prospectClientId}`);
+
+}

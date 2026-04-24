@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft, Mail, Phone, ShoppingCart } from "lucide-react";
-import { createCommercialAction, saveProspectClient } from "@/actions/crm";
+import { convertProspectToClient, createCommercialAction, saveProspectClient } from "@/actions/crm";
 import { DocumentUploader } from "@/components/documents/document-uploader";
 import { EmailComposer } from "@/components/emails/email-composer";
 import { CommercialActionForm } from "@/components/forms/commercial-action-form";
@@ -309,7 +309,10 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
                 Commander
               </Link>
             ) : (
-              <button className="focus-ring rounded-md bg-leaf px-3 py-2 text-sm font-medium text-white">Transformer en client</button>
+              <form action={convertProspectToClient}>
+                <input type="hidden" name="prospectClientId" value={record.id} />
+                <button className="focus-ring rounded-md bg-leaf px-3 py-2 text-sm font-medium text-white">Transformer en client</button>
+              </form>
             )}
           </>
         }
