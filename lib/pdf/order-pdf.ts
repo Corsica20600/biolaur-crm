@@ -10,34 +10,52 @@ function readOrderField(row: DbRow, canonical: string, legacy?: string) {
   return undefined;
 }
 
+function readItemField(row: DbRow, ...keys: string[]) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+  }
+  return undefined;
+}
+
+function isOwnedByUser(row: DbRow, userId: string) {
+  const ownerUserId = readOrderField(row, "owner_user_id", "owner_id");
+  if (!ownerUserId) return true;
+  return String(ownerUserId) === userId;
+}
+
 async function findOrder(
   supabase: ReturnType<typeof createAdminClient>,
   orderIdOrNumber: string,
   ownerUserId?: string
 ) {
-  const ownerFilter = ownerUserId ? { owner_user_id: ownerUserId } : {};
-  const byId = await supabase.from("orders").select("*").eq("id", orderIdOrNumber).match(ownerFilter).maybeSingle();
-  if (!byId.error && byId.data) return { row: byId.data as DbRow, error: null as null };
+  let lastDbError: string | null = null;
 
-  const byOrderNumber = await supabase
-    .from("orders")
-    .select("*")
-    .eq("order_number", orderIdOrNumber)
-    .match(ownerFilter)
-    .maybeSingle();
-  if (!byOrderNumber.error && byOrderNumber.data) return { row: byOrderNumber.data as DbRow, error: null as null };
+  const byId = await supabase.from("orders").select("*").eq("id", orderIdOrNumber).maybeSingle();
+  if (!byId.error && byId.data) {
+    const row = byId.data as DbRow;
+    if (!ownerUserId || isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
+    return { row: null, error: { message: "Commande introuvable." } };
+  }
+  if (byId.error) lastDbError = byId.error.message;
 
-  const byNumeroCommande = await supabase
-    .from("orders")
-    .select("*")
-    .eq("numero_commande", orderIdOrNumber)
-    .match(ownerFilter)
-    .maybeSingle();
-  if (!byNumeroCommande.error && byNumeroCommande.data) return { row: byNumeroCommande.data as DbRow, error: null as null };
+  const byOrderNumber = await supabase.from("orders").select("*").eq("order_number", orderIdOrNumber).maybeSingle();
+  if (!byOrderNumber.error && byOrderNumber.data) {
+    const row = byOrderNumber.data as DbRow;
+    if (!ownerUserId || isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
+    return { row: null, error: { message: "Commande introuvable." } };
+  }
+  if (byOrderNumber.error) lastDbError = byOrderNumber.error.message;
+
+  const byNumeroCommande = await supabase.from("orders").select("*").eq("numero_commande", orderIdOrNumber).maybeSingle();
+  if (!byNumeroCommande.error && byNumeroCommande.data) {
+    const row = byNumeroCommande.data as DbRow;
+    if (!ownerUserId || isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
+    return { row: null, error: { message: "Commande introuvable." } };
+  }
 
   return {
     row: null,
-    error: byId.error ?? byOrderNumber.error ?? byNumeroCommande.error ?? { message: "Commande introuvable." }
+    error: byNumeroCommande.error ?? (lastDbError ? { message: lastDbError } : { message: "Commande introuvable." })
   };
 }
 
@@ -50,12 +68,7 @@ export async function createOrderPdf(orderId: string, ownerUserId?: string) {
   }
 
   const resolvedOrderId = String(dbOrder.id ?? "");
-  const { data: dbItems, error: itemsError } = await supabase
-    .from("order_items")
-    .select("*")
-    .eq("order_id", resolvedOrderId)
-    .match(ownerUserId ? { owner_user_id: ownerUserId } : {})
-    .order("sort_order");
+  const { data: dbItems, error: itemsError } = await supabase.from("order_items").select("*").eq("order_id", resolvedOrderId);
 
   if (itemsError) {
     throw new Error(itemsError.message);
@@ -64,14 +77,21 @@ export async function createOrderPdf(orderId: string, ownerUserId?: string) {
   const order = dbOrder as DbRow;
   const prospectClientId = String(readOrderField(order, "prospect_client_id", "client_id") ?? "");
   const { data: dbProspectClient, error: prospectClientError } = prospectClientId
-    ? await supabase.from("prospects_clients").select("*").eq("id", prospectClientId).single()
+    ? await supabase.from("prospects_clients").select("*").eq("id", prospectClientId).maybeSingle()
     : { data: null, error: null };
   if (prospectClientError) {
     throw new Error(prospectClientError.message);
   }
 
   const client = (dbProspectClient ?? {}) as DbRow;
-  const items = (dbItems ?? []) as DbRow[];
+  const items = ((dbItems ?? []) as DbRow[]).sort((a, b) => {
+    const aSort = Number(readItemField(a, "sort_order", "ordre") ?? 0);
+    const bSort = Number(readItemField(b, "sort_order", "ordre") ?? 0);
+    if (aSort !== bSort) return aSort - bSort;
+    const aCreatedAt = String(readItemField(a, "created_at") ?? "");
+    const bCreatedAt = String(readItemField(b, "created_at") ?? "");
+    return aCreatedAt.localeCompare(bCreatedAt);
+  });
 
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595, 842]);
@@ -105,11 +125,26 @@ export async function createOrderPdf(orderId: string, ownerUserId?: string) {
 
   items.forEach((item, index) => {
     const y = startY - 26 - index * 28;
-    page.drawText(String(item.product_reference ?? ""), { x: 48, y, size: 9, font });
-    page.drawText(String(item.product_name ?? "").slice(0, 42), { x: 130, y, size: 9, font });
-    page.drawText(String(item.quantity ?? 0), { x: 370, y, size: 9, font });
-    page.drawText(formatCurrency(Number(item.unit_price_ht ?? 0)), { x: 410, y, size: 9, font });
-    page.drawText(formatCurrency(Number(item.line_total_ht ?? 0)), { x: 500, y, size: 9, font });
+    page.drawText(String(readItemField(item, "product_reference", "reference") ?? ""), { x: 48, y, size: 9, font });
+    page.drawText(String(readItemField(item, "product_name", "nom_produit", "designation") ?? "Produit").slice(0, 42), {
+      x: 130,
+      y,
+      size: 9,
+      font
+    });
+    page.drawText(String(readItemField(item, "quantity", "quantite") ?? 0), { x: 370, y, size: 9, font });
+    page.drawText(formatCurrency(Number(readItemField(item, "unit_price_ht", "prix_unitaire_ht", "prix_unitaire") ?? 0)), {
+      x: 410,
+      y,
+      size: 9,
+      font
+    });
+    page.drawText(formatCurrency(Number(readItemField(item, "line_total_ht", "total_ligne_ht", "sous_total") ?? 0)), {
+      x: 500,
+      y,
+      size: 9,
+      font
+    });
   });
 
   page.drawText(`Total HT: ${formatCurrency(Number(readOrderField(order, "subtotal_ht", "total_ht") ?? 0))}`, { x: 390, y: 160, size: 12, font: bold });
