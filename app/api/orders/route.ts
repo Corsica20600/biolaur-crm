@@ -84,6 +84,35 @@ async function insertOrderWithCompatPayload(
   return { data: null, error: { message: "Creation commande impossible: compatibilite schema epuisee." } };
 }
 
+async function insertOrderItemsWithCompatPayload(
+  supabase: ReturnType<typeof createServerSupabaseClient>,
+  payloads: Record<string, unknown>[]
+) {
+  const workingPayloads = payloads.map((payload) => ({ ...payload }));
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const { error } = await supabase.from("order_items").insert(workingPayloads);
+    if (!error) {
+      return { error: null as null };
+    }
+
+    const message = error.message ?? "Insertion lignes commande impossible.";
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn && workingPayloads.some((payload) => Object.prototype.hasOwnProperty.call(payload, missingColumn))) {
+      for (const payload of workingPayloads) {
+        if (Object.prototype.hasOwnProperty.call(payload, missingColumn)) {
+          delete payload[missingColumn];
+        }
+      }
+      continue;
+    }
+
+    return { error };
+  }
+
+  return { error: { message: "Insertion lignes commande impossible: compatibilite schema epuisee." } };
+}
+
 function mapOrder(row: DbRow, prospectClient?: DbRow) {
   const prospectClientId = String(readOrderField(row, "prospect_client_id", "client_id") ?? "");
 
@@ -257,18 +286,50 @@ export async function POST(request: Request) {
     const { data: order, error: orderError } = await insertOrderWithCompatPayload(supabase, orderPayload);
 
     if (orderError || !order) {
+      console.error("ORDER CREATE ERROR", {
+        error: orderError?.message ?? "Unknown order insert error",
+        userId: user.id,
+        prospectClientId: client.id,
+        orderPayload
+      });
       return NextResponse.json({ ok: false, error: orderError?.message ?? "Creation commande impossible." }, { status: 500 });
     }
 
-    const { error: itemsError } = await supabase.from("order_items").insert(
-      orderItems.map((item) => ({
-        ...item,
-        owner_user_id: user.id,
-        order_id: order.id
-      }))
-    );
+    const orderItemsPayload = orderItems.map((item) => ({
+      owner_user_id: user.id,
+      owner_id: user.id,
+      order_id: order.id,
+      product_id: item.product_id,
+      quantity: item.quantity,
+      quantite: item.quantity,
+      unit_price_ht: item.unit_price_ht,
+      prix_unitaire_ht: item.unit_price_ht,
+      prix_unitaire: item.unit_price_ht,
+      vat_rate: item.vat_rate,
+      taux_tva: item.vat_rate,
+      line_total_ht: item.line_total_ht,
+      total_ligne_ht: item.line_total_ht,
+      sous_total: item.line_total_ht,
+      discount_percent: item.discount_percent,
+      remise_percent: item.discount_percent,
+      product_name: item.product_name,
+      nom_produit: item.product_name,
+      product_reference: item.product_reference,
+      reference: item.product_reference,
+      sort_order: item.sort_order,
+      ordre: item.sort_order
+    }));
+
+    const { error: itemsError } = await insertOrderItemsWithCompatPayload(supabase, orderItemsPayload);
 
     if (itemsError) {
+      console.error("ORDER ITEMS INSERT ERROR", {
+        error: itemsError.message ?? "Unknown order items insert error",
+        userId: user.id,
+        orderId: String(order.id ?? ""),
+        itemsCount: orderItemsPayload.length,
+        firstItemPayload: orderItemsPayload[0]
+      });
       await supabase.from("orders").delete().eq("id", order.id).eq("owner_user_id", user.id);
       return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
     }
@@ -281,6 +342,9 @@ export async function POST(request: Request) {
       clientId: client.id
     });
   } catch (error) {
+    console.error("ORDER CREATE ERROR", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return NextResponse.json(
       {
         ok: false,
