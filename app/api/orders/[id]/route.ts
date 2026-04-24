@@ -14,7 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   const [{ data: order, error: orderError }, { data: items, error: itemsError }] = await Promise.all([
     supabase
       .from("orders")
-      .select("*, prospects_clients(company_name,trade_name)")
+      .select("*")
       .eq("id", id)
       .eq("owner_user_id", user.id)
       .single(),
@@ -26,7 +26,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: error?.message ?? "Commande introuvable." }, { status: 404 });
   }
 
-  const client = order.prospects_clients as DbRow | null;
+  const prospectClientId = String(order.prospect_client_id ?? "");
+  const { data: prospectClient, error: prospectClientError } = prospectClientId
+    ? await supabase.from("prospects_clients").select("id,company_name,trade_name").eq("id", prospectClientId).single()
+    : { data: null, error: null };
+
+  if (prospectClientError) {
+    return NextResponse.json({ ok: false, error: prospectClientError.message }, { status: 500 });
+  }
+
+  const client = (prospectClient ?? null) as DbRow | null;
 
   return NextResponse.json({
     ok: true,
@@ -34,7 +43,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       id: String(order.id ?? ""),
       ownerUserId: String(order.owner_user_id ?? ""),
       orderNumber: String(order.order_number ?? ""),
-      prospectClientId: String(order.prospect_client_id ?? ""),
+      prospectClientId,
+      clientId: prospectClientId,
       clientName: client ? String(client.trade_name ?? client.company_name ?? "") : "",
       orderStatus: String(order.order_status ?? ""),
       orderDate: String(order.order_date ?? ""),

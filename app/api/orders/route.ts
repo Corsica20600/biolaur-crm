@@ -5,6 +5,7 @@ import { createAdminClient, createServerSupabaseClient } from "@/supabase/admin"
 
 type CreateOrderBody = {
   clientId?: string;
+  prospectClientId?: string;
   comments?: string;
   lines?: {
     productId: string;
@@ -14,8 +15,7 @@ type CreateOrderBody = {
 
 type DbRow = Record<string, unknown>;
 
-function mapOrder(row: DbRow) {
-  const prospectClient = row.prospects_clients as DbRow | undefined;
+function mapOrder(row: DbRow, prospectClient?: DbRow) {
   return {
     id: String(row.id ?? ""),
     ownerUserId: String(row.owner_user_id ?? ""),
@@ -45,17 +45,38 @@ export async function GET() {
   if (response || !user) return response;
 
   const supabase = createAdminClient();
-  const { data: orderRows, error } = await supabase
+  const { data: orderRows, error: ordersError } = await supabase
     .from("orders")
-    .select("*, prospects_clients(company_name,trade_name)")
+    .select("*")
     .eq("owner_user_id", user.id)
     .order("created_at", { ascending: false });
 
-  if (error) {
-    return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  if (ordersError) {
+    return NextResponse.json({ ok: false, error: ordersError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, orders: (orderRows ?? []).map((row) => mapOrder(row as DbRow)) });
+  const orders = (orderRows ?? []) as DbRow[];
+  const prospectClientIds = Array.from(
+    new Set(orders.map((row) => String(row.prospect_client_id ?? "")).filter((id) => id.length > 0))
+  );
+
+  const { data: prospectClientRows, error: prospectClientsError } = prospectClientIds.length
+    ? await supabase.from("prospects_clients").select("id,company_name,trade_name").in("id", prospectClientIds)
+    : { data: [], error: null };
+
+  if (prospectClientsError) {
+    return NextResponse.json({ ok: false, error: prospectClientsError.message }, { status: 500 });
+  }
+
+  const prospectClientById = new Map<string, DbRow>();
+  for (const prospectClient of (prospectClientRows ?? []) as DbRow[]) {
+    prospectClientById.set(String(prospectClient.id ?? ""), prospectClient);
+  }
+
+  return NextResponse.json({
+    ok: true,
+    orders: orders.map((row) => mapOrder(row, prospectClientById.get(String(row.prospect_client_id ?? ""))))
+  });
 }
 
 export async function POST(request: Request) {
@@ -65,7 +86,9 @@ export async function POST(request: Request) {
 
     const body = (await request.json().catch(() => null)) as CreateOrderBody | null;
 
-    if (!body?.clientId || !body.lines?.length) {
+    const requestedProspectClientId = String(body?.prospectClientId ?? body?.clientId ?? "");
+
+    if (!requestedProspectClientId || !body?.lines?.length) {
       return NextResponse.json({ ok: false, error: "Client et lignes de commande requis." }, { status: 400 });
     }
 
@@ -74,7 +97,7 @@ export async function POST(request: Request) {
     const { data: client, error: clientError } = await supabase
       .from("prospects_clients")
       .select("id,owner_user_id,address_line_1,postal_code,city,country,record_type")
-      .eq("id", body.clientId)
+      .eq("id", requestedProspectClientId)
       .eq("owner_user_id", user.id)
       .eq("record_type", "client")
       .single();
@@ -165,7 +188,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, orderId: order.id, orderNumber: order.order_number });
+    return NextResponse.json({
+      ok: true,
+      orderId: order.id,
+      orderNumber: order.order_number,
+      prospectClientId: client.id,
+      clientId: client.id
+    });
   } catch (error) {
     return NextResponse.json(
       {

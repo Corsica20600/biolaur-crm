@@ -80,22 +80,7 @@ async function fetchCrmRows(supabase: Awaited<ReturnType<typeof createClient>>):
     return { data: null, error: { message: primary.error.message } };
   }
 
-  const legacy = await supabase.from("clients").select("*").order("updated_at", { ascending: false });
-  if (!legacy.error) {
-    return { data: (legacy.data ?? []) as Record<string, unknown>[], error: null };
-  }
-
-  if (isMissingColumn(legacy.error.message, "updated_at")) {
-    const legacyNoSort = await supabase.from("clients").select("*").order("created_at", { ascending: false });
-    if (!legacyNoSort.error) {
-      return { data: (legacyNoSort.data ?? []) as Record<string, unknown>[], error: null };
-    }
-  }
-
-  return {
-    data: null,
-    error: { message: `${primary.error.message} | fallback clients: ${legacy.error.message}` }
-  };
+  return { data: [], error: null };
 }
 
 export default async function CrmPage() {

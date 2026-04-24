@@ -31,10 +31,12 @@ function mapRecipient(row: DbRow) {
 }
 
 function mapOrder(row: DbRow) {
+  const prospectClientId = String(row.prospect_client_id ?? "");
   return {
     id: String(row.id ?? ""),
     orderNumber: String(row.order_number ?? row.id ?? ""),
-    clientId: String(row.prospect_client_id ?? "")
+    prospectClientId,
+    clientId: prospectClientId
   };
 }
 

@@ -9,7 +9,7 @@ export async function createOrderPdf(orderId: string, ownerUserId?: string) {
   const [{ data: dbOrder, error: orderError }, { data: dbItems, error: itemsError }] = await Promise.all([
     supabase
       .from("orders")
-      .select("*, prospects_clients(*)")
+      .select("*")
       .eq("id", orderId)
       .match(ownerUserId ? { owner_user_id: ownerUserId } : {})
       .single(),
@@ -29,7 +29,15 @@ export async function createOrderPdf(orderId: string, ownerUserId?: string) {
   }
 
   const order = dbOrder as DbRow;
-  const client = (order.prospects_clients ?? {}) as DbRow;
+  const prospectClientId = String(order.prospect_client_id ?? "");
+  const { data: dbProspectClient, error: prospectClientError } = prospectClientId
+    ? await supabase.from("prospects_clients").select("*").eq("id", prospectClientId).single()
+    : { data: null, error: null };
+  if (prospectClientError) {
+    throw new Error(prospectClientError.message);
+  }
+
+  const client = (dbProspectClient ?? {}) as DbRow;
   const items = (dbItems ?? []) as DbRow[];
 
   const pdfDoc = await PDFDocument.create();
