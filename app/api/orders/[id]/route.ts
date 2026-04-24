@@ -10,6 +10,13 @@ function readOrderField(row: DbRow, canonical: string, legacy?: string) {
   return undefined;
 }
 
+function readItemField(row: DbRow, ...keys: string[]) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+  }
+  return undefined;
+}
+
 function isOwnedByUser(row: DbRow, userId: string) {
   const ownerUserId = readOrderField(row, "owner_user_id", "owner_id");
   if (!ownerUserId) {
@@ -28,6 +35,9 @@ async function findOrder(
     .select("*")
     .eq("id", idOrNumber)
     .maybeSingle();
+  if (byId.error) {
+    console.error("ORDER FETCH ERROR", { step: "by_id", idOrNumber, error: byId.error.message });
+  }
   if (!byId.error && byId.data) {
     const row = byId.data as DbRow;
     if (isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
@@ -39,6 +49,9 @@ async function findOrder(
     .select("*")
     .eq("order_number", idOrNumber)
     .maybeSingle();
+  if (byOrderNumber.error) {
+    console.error("ORDER FETCH ERROR", { step: "by_order_number", idOrNumber, error: byOrderNumber.error.message });
+  }
   if (!byOrderNumber.error && byOrderNumber.data) {
     const row = byOrderNumber.data as DbRow;
     if (isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
@@ -50,6 +63,13 @@ async function findOrder(
     .select("*")
     .eq("numero_commande", idOrNumber)
     .maybeSingle();
+  if (byNumeroCommande.error) {
+    console.error("ORDER FETCH ERROR", {
+      step: "by_numero_commande",
+      idOrNumber,
+      error: byNumeroCommande.error.message
+    });
+  }
   if (!byNumeroCommande.error && byNumeroCommande.data) {
     const row = byNumeroCommande.data as DbRow;
     if (isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
@@ -71,6 +91,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
   const { row: order, error: orderError } = await findOrder(supabase, user.id, id);
   if (orderError || !order) {
+    if (orderError) {
+      console.error("ORDER FETCH ERROR", { id, error: orderError.message });
+    }
+    console.warn("ORDER DETAIL NOT FOUND", { id, userId: user.id });
     return NextResponse.json({ ok: false, error: orderError?.message ?? "Commande introuvable." }, { status: 404 });
   }
 
@@ -81,19 +105,26 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     .eq("order_id", orderId)
     .order("sort_order");
   if (itemsError) {
+    console.error("ORDER ITEMS FETCH ERROR", { orderId, error: itemsError.message });
     return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
   }
 
   const prospectClientId = String(readOrderField(order, "prospect_client_id", "client_id") ?? "");
   const { data: prospectClient, error: prospectClientError } = prospectClientId
-    ? await supabase.from("prospects_clients").select("id,company_name,trade_name").eq("id", prospectClientId).single()
+    ? await supabase
+        .from("prospects_clients")
+        .select("id,company_name,trade_name")
+        .eq("id", prospectClientId)
+        .maybeSingle()
     : { data: null, error: null };
 
   if (prospectClientError) {
+    console.error("ORDER FETCH ERROR", { step: "prospect_client", prospectClientId, error: prospectClientError.message });
     return NextResponse.json({ ok: false, error: prospectClientError.message }, { status: 500 });
   }
 
   const client = (prospectClient ?? null) as DbRow | null;
+  const orderItems = (items ?? []) as DbRow[];
 
   return NextResponse.json({
     ok: true,
@@ -118,20 +149,20 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       commissionRate: Number(order.commission_rate ?? 20),
       createdAt: String(order.created_at ?? ""),
       updatedAt: String(order.updated_at ?? ""),
-      items: (items ?? []).map((item) => ({
-        id: item.id,
-        orderId: item.order_id,
-        productId: item.product_id,
-        productReference: item.product_reference,
-        productName: item.product_name,
-        quantity: Number(item.quantity ?? 0),
-        unitPriceHt: Number(item.unit_price_ht ?? 0),
-        discountPercent: Number(item.discount_percent ?? 0),
-        vatRate: Number(item.vat_rate ?? 20),
-        lineTotalHt: Number(item.line_total_ht ?? 0),
-        sortOrder: Number(item.sort_order ?? 0),
-        createdAt: item.created_at,
-        updatedAt: item.updated_at
+      items: orderItems.map((item) => ({
+        id: String(item.id ?? ""),
+        orderId: String(readItemField(item, "order_id") ?? ""),
+        productId: String(readItemField(item, "product_id") ?? ""),
+        productReference: String(readItemField(item, "product_reference", "reference") ?? ""),
+        productName: String(readItemField(item, "product_name", "nom_produit", "designation") ?? "Produit"),
+        quantity: Number(readItemField(item, "quantity", "quantite") ?? 0),
+        unitPriceHt: Number(readItemField(item, "unit_price_ht", "prix_unitaire_ht", "prix_unitaire") ?? 0),
+        discountPercent: Number(readItemField(item, "discount_percent", "remise_percent") ?? 0),
+        vatRate: Number(readItemField(item, "vat_rate", "taux_tva") ?? 0),
+        lineTotalHt: Number(readItemField(item, "line_total_ht", "total_ligne_ht", "sous_total") ?? 0),
+        sortOrder: Number(readItemField(item, "sort_order") ?? 0),
+        createdAt: String(readItemField(item, "created_at") ?? ""),
+        updatedAt: String(readItemField(item, "updated_at") ?? "")
       }))
     }
   });
