@@ -29,10 +29,32 @@ type PreparedAttachment = {
   brevo: { name: string; content: string } | { name: string; url: string };
 };
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function parseEmailFrom(value?: string) {
   if (!value) return "";
   const match = value.match(/<([^>]+)>/);
-  return match?.[1] ?? value;
+  return (match?.[1] ?? value).trim();
+}
+
+function parseRecipients(value: string) {
+  return value
+    .split(/[,\n;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => parseEmailFrom(item));
+}
+
+function isValidEmail(value: string) {
+  return EMAIL_REGEX.test(value);
+}
+
+function stringifyBrevoError(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const row = payload as Record<string, unknown>;
+  const message = typeof row.message === "string" ? row.message : "";
+  const code = typeof row.code === "string" ? row.code : "";
+  return [code, message].filter(Boolean).join(" - ");
 }
 
 function escapeHtml(value: string) {
@@ -189,6 +211,16 @@ export async function sendCrmEmail(input: SendEmailInput) {
     if (!senderEmail) return { ok: false, message: "EMAIL_FROM manquant dans .env.local." };
     if (!input.to || !input.subject) return { ok: false, message: "Destinataire et objet requis." };
 
+    const recipients = parseRecipients(input.to);
+    if (!recipients.length) {
+      return { ok: false, message: "Aucun destinataire valide detecte." };
+    }
+
+    const invalidRecipients = recipients.filter((email) => !isValidEmail(email));
+    if (invalidRecipients.length) {
+      return { ok: false, message: `Adresse email invalide: ${invalidRecipients[0]}` };
+    }
+
     const supabase = createAdminClient();
     const attachments = await prepareAttachments(supabase, input, user.id);
 
@@ -201,7 +233,7 @@ export async function sendCrmEmail(input: SendEmailInput) {
       },
       body: JSON.stringify({
         sender: { email: senderEmail, name: senderName },
-        to: [{ email: input.to }],
+        to: recipients.map((email) => ({ email })),
         subject: input.subject,
         htmlContent: `<p>${escapeHtml(input.body).replaceAll("\n", "<br />")}</p>`,
         textContent: input.body,
@@ -211,9 +243,17 @@ export async function sendCrmEmail(input: SendEmailInput) {
 
     const brevoPayload = await responseBrevo.json().catch(() => null);
     if (!responseBrevo.ok) {
+      const details = stringifyBrevoError(brevoPayload);
+      console.error("BREVO SEND ERROR", {
+        status: responseBrevo.status,
+        details: details || brevoPayload,
+        recipients,
+        subject: input.subject,
+        attachmentCount: attachments.length
+      });
       return {
         ok: false,
-        message: "Echec de l'envoi Brevo.",
+        message: details ? `Echec de l'envoi Brevo: ${details}` : "Echec de l'envoi Brevo.",
         details: brevoPayload
       };
     }

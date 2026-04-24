@@ -167,7 +167,11 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
         setMessage({ type: "success", text: result.message });
         window.dispatchEvent(new CustomEvent("biolaur:email-sent"));
       } else {
-        setMessage({ type: "error", text: result.message });
+        const detailText =
+          result.details && typeof result.details === "object" && "message" in result.details
+            ? String((result.details as { message?: string }).message ?? "")
+            : "";
+        setMessage({ type: "error", text: detailText ? `${result.message} (${detailText})` : result.message });
       }
     });
   }
