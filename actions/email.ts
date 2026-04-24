@@ -64,6 +64,15 @@ function extractMissingColumn(message: string) {
   return fromPostgres ?? null;
 }
 
+function extractForeignKeyColumn(message: string) {
+  const constraint = message.match(/foreign key constraint "([^"]+)"/i)?.[1] ?? "";
+  if (constraint.includes("_client_id_")) return "client_id";
+  if (constraint.includes("_order_id_")) return "order_id";
+  if (constraint.includes("_template_id_")) return "template_id";
+  if (constraint.includes("_email_template_id_")) return "email_template_id";
+  return null;
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -105,12 +114,12 @@ async function blobToBase64(blob: Blob) {
 }
 
 async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, userId: string) {
-  const prospectClientId = input.prospectClientId ?? input.clientId ?? null;
+  const prospectClientId = input.prospectClientId ?? null;
   const payload: Record<string, unknown> = {
     owner_user_id: userId,
     owner_id: userId,
     prospect_client_id: prospectClientId,
-    client_id: prospectClientId,
+    client_id: input.clientId ?? null,
     order_id: input.orderId || null,
     email_template_id: input.templateId || null,
     template_id: input.templateId || null,
@@ -132,6 +141,12 @@ async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, in
     const missingColumn = extractMissingColumn(message);
     if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
       delete workingPayload[missingColumn];
+      continue;
+    }
+
+    const foreignKeyColumn = extractForeignKeyColumn(message);
+    if (foreignKeyColumn && Object.prototype.hasOwnProperty.call(workingPayload, foreignKeyColumn)) {
+      delete workingPayload[foreignKeyColumn];
       continue;
     }
 
