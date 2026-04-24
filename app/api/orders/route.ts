@@ -22,6 +22,11 @@ function extractMissingColumn(message: string) {
   return match?.[1];
 }
 
+function extractNotNullColumn(message: string) {
+  const match = message.match(/null value in column "([^"]+)"/i);
+  return match?.[1];
+}
+
 function readOrderField(row: DbRow, canonical: string, legacy?: string) {
   if (row[canonical] !== undefined && row[canonical] !== null) return row[canonical];
   if (legacy && row[legacy] !== undefined && row[legacy] !== null) return row[legacy];
@@ -90,6 +95,43 @@ async function insertOrderItemsWithCompatPayload(
 ) {
   const workingPayloads = payloads.map((payload) => ({ ...payload }));
 
+  function hydrateNotNullColumn(payload: Record<string, unknown>, column: string) {
+    if (payload[column] !== undefined && payload[column] !== null) return true;
+
+    const aliasSourceByColumn: Record<string, string[]> = {
+      designation: ["product_name", "nom_produit"],
+      product_name: ["designation", "nom_produit"],
+      nom_produit: ["product_name", "designation"],
+      reference: ["product_reference"],
+      product_reference: ["reference"],
+      quantite: ["quantity"],
+      quantity: ["quantite"],
+      prix_unitaire: ["unit_price_ht", "prix_unitaire_ht"],
+      prix_unitaire_ht: ["unit_price_ht", "prix_unitaire"],
+      unit_price_ht: ["prix_unitaire_ht", "prix_unitaire"],
+      taux_tva: ["vat_rate"],
+      vat_rate: ["taux_tva"],
+      total_ligne_ht: ["line_total_ht", "sous_total"],
+      sous_total: ["line_total_ht", "total_ligne_ht"],
+      line_total_ht: ["total_ligne_ht", "sous_total"],
+      remise_percent: ["discount_percent", "remise"],
+      discount_percent: ["remise_percent", "remise"],
+      remise: ["discount_percent", "remise_percent"],
+      ordre: ["sort_order"],
+      sort_order: ["ordre"]
+    };
+
+    const sources = aliasSourceByColumn[column] ?? [];
+    for (const source of sources) {
+      if (payload[source] !== undefined && payload[source] !== null) {
+        payload[column] = payload[source];
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const { error } = await supabase.from("order_items").insert(workingPayloads);
     if (!error) {
@@ -105,6 +147,17 @@ async function insertOrderItemsWithCompatPayload(
         }
       }
       continue;
+    }
+
+    const notNullColumn = extractNotNullColumn(message);
+    if (notNullColumn) {
+      let hydratedAtLeastOne = false;
+      for (const payload of workingPayloads) {
+        hydratedAtLeastOne = hydrateNotNullColumn(payload, notNullColumn) || hydratedAtLeastOne;
+      }
+      if (hydratedAtLeastOne) {
+        continue;
+      }
     }
 
     return { error };
@@ -325,11 +378,9 @@ export async function POST(request: Request) {
 
     if (itemsError) {
       console.error("ORDER ITEMS INSERT ERROR", {
-        error: itemsError.message ?? "Unknown order items insert error",
-        userId: user.id,
         orderId: String(order.id ?? ""),
-        itemsCount: orderItemsPayload.length,
-        firstItemPayload: orderItemsPayload[0]
+        itemsErrorMessage: itemsError.message ?? "Unknown order items insert error",
+        itemsPayload: orderItemsPayload
       });
       await supabase.from("orders").delete().eq("id", order.id).eq("owner_user_id", user.id);
       return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });

@@ -10,6 +10,14 @@ function readOrderField(row: DbRow, canonical: string, legacy?: string) {
   return undefined;
 }
 
+function isOwnedByUser(row: DbRow, userId: string) {
+  const ownerUserId = readOrderField(row, "owner_user_id", "owner_id");
+  if (!ownerUserId) {
+    return true;
+  }
+  return String(ownerUserId) === userId;
+}
+
 async function findOrder(
   supabase: ReturnType<typeof createAdminClient>,
   ownerUserId: string,
@@ -19,25 +27,34 @@ async function findOrder(
     .from("orders")
     .select("*")
     .eq("id", idOrNumber)
-    .eq("owner_user_id", ownerUserId)
     .maybeSingle();
-  if (!byId.error && byId.data) return { row: byId.data as DbRow, error: null as null };
+  if (!byId.error && byId.data) {
+    const row = byId.data as DbRow;
+    if (isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
+    return { row: null, error: { message: "Commande introuvable." } };
+  }
 
   const byOrderNumber = await supabase
     .from("orders")
     .select("*")
     .eq("order_number", idOrNumber)
-    .eq("owner_user_id", ownerUserId)
     .maybeSingle();
-  if (!byOrderNumber.error && byOrderNumber.data) return { row: byOrderNumber.data as DbRow, error: null as null };
+  if (!byOrderNumber.error && byOrderNumber.data) {
+    const row = byOrderNumber.data as DbRow;
+    if (isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
+    return { row: null, error: { message: "Commande introuvable." } };
+  }
 
   const byNumeroCommande = await supabase
     .from("orders")
     .select("*")
     .eq("numero_commande", idOrNumber)
-    .eq("owner_user_id", ownerUserId)
     .maybeSingle();
-  if (!byNumeroCommande.error && byNumeroCommande.data) return { row: byNumeroCommande.data as DbRow, error: null as null };
+  if (!byNumeroCommande.error && byNumeroCommande.data) {
+    const row = byNumeroCommande.data as DbRow;
+    if (isOwnedByUser(row, ownerUserId)) return { row, error: null as null };
+    return { row: null, error: { message: "Commande introuvable." } };
+  }
 
   return {
     row: null,
@@ -62,7 +79,6 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     .from("order_items")
     .select("*")
     .eq("order_id", orderId)
-    .eq("owner_user_id", user.id)
     .order("sort_order");
   if (itemsError) {
     return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
