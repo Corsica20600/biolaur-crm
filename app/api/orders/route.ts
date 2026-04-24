@@ -259,7 +259,7 @@ export async function POST(request: Request) {
       owner_user_id: user.id,
       owner_id: user.id,
       prospect_client_id: client.id,
-      client_id: client.id,
+      client_id: null,
       order_number: generatedOrderNumber,
       numero_commande: generatedOrderNumber,
       order_status: "brouillon",
