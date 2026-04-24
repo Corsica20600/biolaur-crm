@@ -73,10 +73,10 @@ export default function OrderDetailPage() {
               <FileDown className="h-4 w-4" />
               PDF
             </a>
-            <button className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
+            <a href="#email-compose" className="focus-ring inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium">
               <Mail className="h-4 w-4" />
               Envoyer
-            </button>
+            </a>
             <Link href="/orders/new" className="focus-ring inline-flex items-center gap-2 rounded-md bg-leaf px-3 py-2 text-sm font-medium text-white">
               <Copy className="h-4 w-4" />
               Dupliquer
@@ -111,7 +111,7 @@ export default function OrderDetailPage() {
             <Row label="TVA" value={formatCurrency(order.totalVat)} />
             <Row label="Total TTC" value={formatCurrency(order.totalTtc)} strong />
           </section>
-          <section>
+          <section id="email-compose">
             <h2 className="mb-3 font-semibold text-ink">Envoi email</h2>
             <EmailComposer prospectClientId={order.prospectClientId} orderId={order.id} />
           </section>

@@ -57,10 +57,10 @@ export function ProductsCatalog({
             Catalogue avec fiches techniques PDF, fiches de securite et ajout rapide en commande.
           </p>
         </div>
-        <button className="premium-button bg-emerald-700 text-white shadow-sm hover:bg-emerald-800">
+        <Link href="/products/new" className="premium-button bg-emerald-700 text-white shadow-sm hover:bg-emerald-800">
           <Plus className="h-4 w-4" />
           Ajouter un produit
-        </button>
+        </Link>
       </div>
 
       <section className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
