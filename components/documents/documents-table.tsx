@@ -37,9 +37,7 @@ export function DocumentsTable({
           value: "",
           options: [
             { label: "FT", value: "fiche_technique" },
-            { label: "FDS", value: "fiche_securite" },
-            { label: "Bon commande", value: "bon_commande" },
-            { label: "Autres", value: "autre" }
+            { label: "FDS", value: "fiche_securite" }
           ]
         }
       ]}

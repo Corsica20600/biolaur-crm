@@ -13,13 +13,24 @@ type ProductOption = {
   name: string;
 };
 
+type DocumentUploadType = "fiche_technique" | "fiche_securite" | "bon_commande" | "autre";
+
+const uploadTypeOptions: { value: DocumentUploadType; label: string }[] = [
+  { value: "fiche_technique", label: "Fiche technique" },
+  { value: "fiche_securite", label: "Fiche securite" },
+  { value: "bon_commande", label: "Bon de commande" },
+  { value: "autre", label: "Autres" }
+];
+
 export function DocumentUploader({
   productId,
-  products = []
+  products = [],
+  allowedTypes = ["fiche_technique", "fiche_securite", "bon_commande", "autre"]
 }: {
   prospectClientId?: string;
   productId?: string;
   products?: ProductOption[];
+  allowedTypes?: DocumentUploadType[];
 }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -51,7 +62,11 @@ export function DocumentUploader({
         </div>
         <div className="flex-1">
           <p className="text-sm font-medium text-ink">Ajouter un document</p>
-          <p className="text-xs text-slate-500">Buckets prevus : technical-sheets, safety-sheets, order-pdfs, client-documents.</p>
+          <p className="text-xs text-slate-500">
+            {allowedTypes.includes("bon_commande") || allowedTypes.includes("autre")
+              ? "Buckets prevus : technical-sheets, safety-sheets, order-pdfs, client-documents."
+              : "Buckets prevus : technical-sheets, safety-sheets."}
+          </p>
         </div>
         {!productId ? (
           <select name="productId" required className="focus-ring h-10 rounded-md border border-line px-3 text-sm">
@@ -64,10 +79,11 @@ export function DocumentUploader({
           </select>
         ) : null}
         <select name="type" className="focus-ring h-10 rounded-md border border-line px-3 text-sm">
-          <option value="fiche_technique">Fiche technique</option>
-          <option value="fiche_securite">Fiche securite</option>
-          <option value="bon_commande">Bon de commande</option>
-          <option value="autre">Autres</option>
+          {uploadTypeOptions.filter((option) => allowedTypes.includes(option.value)).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
         </select>
         <input name="file" type="file" accept="application/pdf" required className="text-sm" />
         <button

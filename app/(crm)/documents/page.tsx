@@ -4,6 +4,8 @@ import { PageHeader } from "@/components/page-header";
 import { createClient } from "@/supabase/server";
 import type { ProductDocumentType } from "@/types/crm";
 
+const ALLOWED_DOCUMENT_TYPES = new Set(["fiche_technique", "fiche_securite"]);
+
 function resolveBucket(type: string) {
   if (type === "fiche_technique") return "technical-sheets";
   if (type === "fiche_securite") return "safety-sheets";
@@ -82,7 +84,9 @@ export default async function DocumentsPage() {
       : documentsResult.rows;
 
   const rows = await Promise.all(
-    normalizedDocuments.map(async (document) => {
+    normalizedDocuments
+      .filter((document) => ALLOWED_DOCUMENT_TYPES.has(String(document.document_type ?? "")))
+      .map(async (document) => {
       const bucket = resolveBucket(document.document_type ?? "autre");
       const storageObject = resolveStoragePath(document.storage_path);
       const path = storageObject?.bucket ? storageObject.path : document.storage_path ?? "";
@@ -102,18 +106,20 @@ export default async function DocumentsPage() {
         publicUrl: resolvedUrl,
         mimeType: document.mime_type ?? "",
         createdAt: document.created_at,
-        updatedAt: document.updated_at
-      };
-    })
+          updatedAt: document.updated_at
+        };
+      })
   );
+
+  const functionalRows = rows.filter((row) => Boolean(row.publicUrl));
 
   return (
     <>
-      <PageHeader title="Documents" description="Fiches techniques, fiches de securite, bons de commande et documents clients." />
+      <PageHeader title="Documents" description="Fiches techniques et fiches de securite produits." />
       <div className="mb-5">
-        <DocumentUploader products={products} />
+        <DocumentUploader products={products} allowedTypes={["fiche_technique", "fiche_securite"]} />
       </div>
-      <DocumentsTable rows={rows} products={products.map((product) => ({ id: product.id, reference: product.reference }))} />
+      <DocumentsTable rows={functionalRows} products={products.map((product) => ({ id: product.id, reference: product.reference }))} />
     </>
   );
 }
