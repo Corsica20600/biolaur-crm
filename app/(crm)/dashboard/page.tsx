@@ -55,12 +55,12 @@ export default async function DashboardPage() {
     supabase.from("products").select("*", { count: "exact", head: true }).eq("actif", true),
     supabase
       .from("orders")
-      .select("id,order_number,order_date,order_status,subtotal_ht,prospect_client_id,prospects_clients(trade_name,company_name)")
+      .select("id,order_number,order_date,order_status,subtotal_ht,prospect_client_id")
       .order("created_at", { ascending: false })
       .limit(10),
     supabase
       .from("commercial_actions")
-      .select("id,prospect_client_id,statut,compte_rendu,date_prochaine_action,prospects_clients(trade_name,company_name)")
+      .select("id,prospect_client_id,statut,compte_rendu,date_prochaine_action")
       .not("date_prochaine_action", "is", null)
       .order("date_prochaine_action", { ascending: true })
       .limit(5),
@@ -99,6 +99,27 @@ export default async function DashboardPage() {
 
   const recentOrders = (recentOrderRows ?? []) as DbRow[];
   const upcomingActions = (upcomingActionRows ?? []) as DbRow[];
+  const relatedProspectClientIds = Array.from(
+    new Set(
+      [...recentOrders, ...upcomingActions]
+        .map((row) => String(row.prospect_client_id ?? ""))
+        .filter((id) => id.length > 0)
+    )
+  );
+
+  const { data: relatedProspectClients, error: relatedProspectsError } = relatedProspectClientIds.length
+    ? await supabase.from("prospects_clients").select("id,trade_name,company_name").in("id", relatedProspectClientIds)
+    : { data: [], error: null };
+
+  if (relatedProspectsError) {
+    throw new Error(`Chargement dashboard impossible: ${relatedProspectsError.message}`);
+  }
+
+  const prospectClientById = new Map<string, DbRow>();
+  for (const prospectClient of (relatedProspectClients ?? []) as DbRow[]) {
+    prospectClientById.set(String(prospectClient.id ?? ""), prospectClient);
+  }
+
   const topClients = ((topClientRows ?? []) as DbRow[]).map((row) => ({
     label: String(row.trade_name ?? row.company_name ?? "-"),
     value: String(row.city ?? "-")
@@ -127,7 +148,7 @@ export default async function DashboardPage() {
             <table className="min-w-full text-sm">
               <tbody className="divide-y divide-line">
                 {recentOrders.map((order) => {
-                  const prospectClient = order.prospects_clients as DbRow | null;
+                  const prospectClient = prospectClientById.get(String(order.prospect_client_id ?? ""));
                   return (
                     <tr key={String(order.id ?? "")}>
                       <td className="py-3 pr-4">
@@ -162,7 +183,7 @@ export default async function DashboardPage() {
           </div>
           <div className="space-y-3">
             {upcomingActions.map((action) => {
-              const prospectClient = action.prospects_clients as DbRow | null;
+              const prospectClient = prospectClientById.get(String(action.prospect_client_id ?? ""));
               const prospectClientId = String(action.prospect_client_id ?? "");
               return (
                 <Link key={String(action.id ?? "")} href={`/crm/${prospectClientId}`} className="block rounded-md border border-line p-3 hover:bg-slate-50">
