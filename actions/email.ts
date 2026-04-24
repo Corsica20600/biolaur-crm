@@ -73,6 +73,26 @@ function extractForeignKeyColumn(message: string) {
   return null;
 }
 
+function isMissingOwnerUserColumn(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("owner_user_id") && (lower.includes("column") || lower.includes("could not find"));
+}
+
+function readField(row: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== null && value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function isOptOut(row: Record<string, unknown>) {
+  const value = readField(row, "opt_out", "ne_plus_contacter", "do_not_contact", "blacklisted");
+  if (typeof value === "boolean") return value;
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "oui" || normalized === "yes";
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -183,6 +203,52 @@ async function insertEmailAttachments(
   if (retryError) throw retryError;
 }
 
+async function insertCommercialActionDone(
+  supabase: ReturnType<typeof createAdminClient>,
+  userId: string,
+  prospectClientId: string | undefined,
+  subject: string,
+  body: string
+) {
+  if (!prospectClientId) return;
+
+  const payload: Record<string, unknown> = {
+    owner_user_id: userId,
+    owner_id: userId,
+    prospect_client_id: prospectClientId,
+    action_type: "email",
+    type: "email",
+    action_status: "fait",
+    statut: "fait",
+    action_date: new Date().toISOString(),
+    date_action: new Date().toISOString(),
+    summary: `Email envoye: ${subject}`,
+    compte_rendu: `Email envoye: ${subject}`,
+    details: body,
+    prochaine_action: body
+  };
+
+  const workingPayload = { ...payload };
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const { error } = await supabase.from("commercial_actions").insert(workingPayload);
+    if (!error) return;
+
+    const message = error.message ?? "Insertion commercial_actions impossible.";
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+      delete workingPayload[missingColumn];
+      continue;
+    }
+
+    if (isMissingOwnerUserColumn(message) && Object.prototype.hasOwnProperty.call(workingPayload, "owner_user_id")) {
+      delete workingPayload.owner_user_id;
+      continue;
+    }
+
+    throw new Error(message);
+  }
+}
+
 async function prepareAttachments(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, ownerUserId: string) {
   const prepared: PreparedAttachment[] = [];
   const productDocumentIds = input.attachments.filter((item) => item.type === "product_document").map((item) => item.id);
@@ -262,6 +328,18 @@ export async function sendCrmEmail(input: SendEmailInput) {
     }
 
     const supabase = createAdminClient();
+    if (input.prospectClientId) {
+      const { data: prospectRow, error: prospectError } = await supabase
+        .from("prospects_clients")
+        .select("*")
+        .eq("id", input.prospectClientId)
+        .maybeSingle();
+      if (prospectError) return { ok: false, message: prospectError.message };
+      if (prospectRow && isOptOut(prospectRow as Record<string, unknown>)) {
+        return { ok: false, message: "Envoi bloque: ce contact est opt-out / ne plus contacter." };
+      }
+    }
+
     const attachments = await prepareAttachments(supabase, input, user.id);
 
     const responseBrevo = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -300,8 +378,10 @@ export async function sendCrmEmail(input: SendEmailInput) {
 
     const emailLogId = await insertEmailLog(supabase, input, user.id);
     await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
+    await insertCommercialActionDone(supabase, user.id, input.prospectClientId, input.subject, input.body);
 
     revalidatePath("/emails");
+    revalidatePath("/actions");
     return { ok: true, message: "Email envoye et historise.", emailLogId };
   } catch (error) {
     return {

@@ -123,12 +123,13 @@ export async function createCommercialAction(
   const actionDate = clean(formData.get("actionDate"));
   const nextActionDate = clean(formData.get("nextActionDate"));
   const actionType = clean(formData.get("actionType")) || "appel";
+  const normalizedActionType = actionType === "reassort" || actionType === "prospection" ? "relance" : actionType;
   const actionStatus = clean(formData.get("actionStatus")) || "a_faire";
 
   const payload: CommercialActionInsertPayload = {
     owner_user_id: user.id,
     prospect_client_id: prospectClientId,
-    action_type: actionType,
+    action_type: normalizedActionType,
     type: actionType,
     statut: actionStatus,
     date_action: actionDate || new Date().toISOString(),

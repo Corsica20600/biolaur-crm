@@ -37,6 +37,8 @@ export function CommercialActionForm({
             <option value="visite">Visite</option>
             <option value="relance">Relance</option>
             <option value="email">Email</option>
+            <option value="reassort">Reassort</option>
+            <option value="prospection">Prospection</option>
             <option value="rendez_vous">Rendez-vous</option>
             <option value="note">Note</option>
           </select>

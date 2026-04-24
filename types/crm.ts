@@ -9,7 +9,7 @@ export type CommercialStatus =
   | "actif"
   | "inactif";
 export type OrderStatus = "brouillon" | "envoyee" | "validee" | "livree" | "payee" | "annulee";
-export type ActionType = "appel" | "visite" | "relance" | "email" | "rendez_vous" | "note";
+export type ActionType = "appel" | "visite" | "relance" | "email" | "rendez_vous" | "note" | "reassort" | "prospection";
 export type ActionStatus = "a_faire" | "fait" | "annule";
 export type ProductDocumentType = "fiche_technique" | "fiche_securite" | "bon_commande" | "plaquette" | "autre";
 export type EmailSendStatus = "draft" | "sent" | "failed";
