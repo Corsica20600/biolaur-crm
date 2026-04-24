@@ -1,5 +1,5 @@
 import { AppShell } from "@/components/layout/app-shell";
-import { appSettings } from "@/lib/demo-data";
+import { defaultAppSettings } from "@/lib/default-settings";
 import { createClient } from "@/supabase/server";
 
 function unknownColumnName(message?: string) {
@@ -38,10 +38,10 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   return (
     <AppShell
       companyCard={{
-        companyName: settings?.company_name ?? appSettings.companyName,
-        companyAddress: settings?.company_address ?? appSettings.companyAddress,
-        senderPhone: settings?.sender_phone ?? appSettings.senderPhone,
-        senderEmail: settings?.sender_email ?? appSettings.senderEmail
+        companyName: settings?.company_name ?? defaultAppSettings.companyName,
+        companyAddress: settings?.company_address ?? defaultAppSettings.companyAddress,
+        senderPhone: settings?.sender_phone ?? defaultAppSettings.senderPhone,
+        senderEmail: settings?.sender_email ?? defaultAppSettings.senderEmail
       }}
     >
       {children}

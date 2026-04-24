@@ -1,9 +1,26 @@
 "use client";
 
-import { productCategories } from "@/lib/demo-data";
 import type { Product } from "@/types/crm";
 
-export function ProductForm({ product }: { product?: Product }) {
+const defaultCategories = [
+  { id: "cat-vaisselle-machine", name: "Vaisselle machine" },
+  { id: "cat-vaisselle-main", name: "Vaisselle main" },
+  { id: "cat-sanitaire", name: "Sanitaire" },
+  { id: "cat-vitres", name: "Vitres" },
+  { id: "cat-ambiance", name: "Ambiance et odeurs" },
+  { id: "cat-detartrants", name: "Detartrants" },
+  { id: "cat-maintenance", name: "Maintenance technique" },
+  { id: "cat-canalisations", name: "Canalisations" },
+  { id: "cat-surfaces", name: "Surfaces" }
+];
+
+export function ProductForm({
+  product,
+  categories = defaultCategories
+}: {
+  product?: Product;
+  categories?: { id: string; name: string }[];
+}) {
   return (
     <form className="grid gap-4 rounded-lg border border-line bg-white p-4 md:grid-cols-2">
       <Field label="Reference" name="reference" defaultValue={product?.reference} />
@@ -12,7 +29,7 @@ export function ProductForm({ product }: { product?: Product }) {
       <label>
         <span className="mb-1 block text-sm font-medium text-slate-700">Categorie</span>
         <select name="categoryId" defaultValue={product?.categoryId} className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm">
-          {productCategories.map((category) => (
+          {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
             </option>

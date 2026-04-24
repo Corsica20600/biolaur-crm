@@ -57,6 +57,13 @@ function stringifyBrevoError(payload: unknown) {
   return [code, message].filter(Boolean).join(" - ");
 }
 
+function extractMissingColumn(message: string) {
+  const fromPostgrest = message.match(/Could not find the '([^']+)' column/i)?.[1];
+  if (fromPostgrest) return fromPostgrest;
+  const fromPostgres = message.match(/column "([^"]+)" of relation/i)?.[1] ?? message.match(/column "([^"]+)" does not exist/i)?.[1];
+  return fromPostgres ?? null;
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -99,21 +106,39 @@ async function blobToBase64(blob: Blob) {
 
 async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, userId: string) {
   const prospectClientId = input.prospectClientId ?? input.clientId ?? null;
-  const payload = {
+  const payload: Record<string, unknown> = {
     owner_user_id: userId,
+    owner_id: userId,
     prospect_client_id: prospectClientId,
+    client_id: prospectClientId,
     order_id: input.orderId || null,
     email_template_id: input.templateId || null,
+    template_id: input.templateId || null,
     recipient_email: input.to,
+    to_email: input.to,
     subject: input.subject,
     body: input.body,
     send_status: "sent",
+    status: "sent",
     sent_at: new Date().toISOString()
   };
 
-  const { data, error } = await supabase.from("email_logs").insert(payload).select("id").single();
-  if (!error && data?.id) return data.id as string;
-  throw new Error(error?.message ?? "Insertion email_logs impossible.");
+  const workingPayload = { ...payload };
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const { data, error } = await supabase.from("email_logs").insert(workingPayload).select("id").single();
+    if (!error && data?.id) return data.id as string;
+
+    const message = error?.message ?? "Insertion email_logs impossible.";
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+      delete workingPayload[missingColumn];
+      continue;
+    }
+
+    throw new Error(message);
+  }
+
+  throw new Error("Insertion email_logs impossible: compatibilite schema epuisee.");
 }
 
 async function insertEmailAttachments(

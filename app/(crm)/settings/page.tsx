@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/page-header";
-import { appSettings } from "@/lib/demo-data";
+import { defaultAppSettings } from "@/lib/default-settings";
 import { SettingsForm, type SettingsSaveState } from "@/components/settings/settings-form";
 import { createClient } from "@/supabase/server";
 import type { AppSettings } from "@/types/crm";
@@ -150,7 +150,7 @@ export default async function SettingsPage() {
 
   const { data } = user ? await loadUserSettings(supabase, user.id) : { data: null };
 
-  const settings = data ? mapSettings(data) : appSettings;
+  const settings = data ? mapSettings(data) : defaultAppSettings;
 
   return (
     <>

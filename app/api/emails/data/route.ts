@@ -21,6 +21,13 @@ function mapTemplate(row: DbRow) {
   };
 }
 
+function readField(row: DbRow, ...keys: string[]) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+  }
+  return undefined;
+}
+
 function mapRecipient(row: DbRow) {
   return {
     id: String(row.id ?? ""),
@@ -68,18 +75,19 @@ function mapAttachment(row: DbRow) {
 }
 
 function mapEmailLog(row: DbRow, attachments: ReturnType<typeof mapAttachment>[]) {
+  const sendStatusRaw = String(readField(row, "send_status", "status") ?? "sent");
   return {
     id: String(row.id ?? ""),
     ownerUserId: String(row.owner_user_id ?? ""),
     prospectClientId: row.prospect_client_id ? String(row.prospect_client_id) : undefined,
     orderId: row.order_id ? String(row.order_id) : undefined,
-    emailTemplateId: row.email_template_id ? String(row.email_template_id) : undefined,
-    recipientEmail: String(row.recipient_email ?? ""),
+    emailTemplateId: readField(row, "email_template_id", "template_id") ? String(readField(row, "email_template_id", "template_id")) : undefined,
+    recipientEmail: String(readField(row, "recipient_email", "to_email") ?? ""),
     ccEmail: row.cc_email ? String(row.cc_email) : undefined,
     bccEmail: row.bcc_email ? String(row.bcc_email) : undefined,
     subject: String(row.subject ?? ""),
     body: String(row.body ?? ""),
-    sendStatus: String(row.send_status ?? "sent"),
+    sendStatus: sendStatusRaw === "draft" || sendStatusRaw === "failed" ? sendStatusRaw : "sent",
     sentAt: row.sent_at ? String(row.sent_at) : String(row.created_at ?? ""),
     errorMessage: row.error_message ? String(row.error_message) : undefined,
     createdAt: String(row.created_at ?? ""),

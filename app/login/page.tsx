@@ -25,7 +25,7 @@ export default function LoginPage() {
           </label>
           <button className="focus-ring w-full rounded-md bg-leaf px-4 py-2 text-sm font-medium text-white">Se connecter</button>
         </form>
-        <p className="mt-4 text-xs text-slate-500">En demo locale, les pages CRM restent consultables sans session Supabase.</p>
+        <p className="mt-4 text-xs text-slate-500">Utilisez vos identifiants Supabase pour acceder au CRM.</p>
       </div>
     </main>
   );
