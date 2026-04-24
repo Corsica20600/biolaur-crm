@@ -21,6 +21,13 @@ type HistoryEvent = {
   status?: ActionStatus | Order["orderStatus"] | EmailLog["sendStatus"];
 };
 
+function readField(row: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+  }
+  return undefined;
+}
+
 function mapProspectClient(row: Record<string, unknown>): ProspectClient {
   return {
     id: String(row.id ?? ""),
@@ -123,28 +130,28 @@ function mapOrder(row: Record<string, unknown>, items: OrderItem[], clientNameFa
   return {
     id: String(row.id ?? ""),
     ownerUserId: String(row.owner_user_id ?? ""),
-    orderNumber: String(row.order_number ?? ""),
+    orderNumber: String(readField(row, "order_number", "numero_commande") ?? ""),
     prospectClientId: String(row.prospect_client_id ?? ""),
     clientName: clientNameFallback,
     orderStatus:
-      row.order_status === "envoyee" ||
-      row.order_status === "validee" ||
-      row.order_status === "livree" ||
-      row.order_status === "payee" ||
-      row.order_status === "annulee"
-        ? row.order_status
+      readField(row, "order_status", "statut") === "envoyee" ||
+      readField(row, "order_status", "statut") === "validee" ||
+      readField(row, "order_status", "statut") === "livree" ||
+      readField(row, "order_status", "statut") === "payee" ||
+      readField(row, "order_status", "statut") === "annulee"
+        ? (readField(row, "order_status", "statut") as Order["orderStatus"])
         : "brouillon",
-    orderDate: String(row.order_date ?? ""),
+    orderDate: String(readField(row, "order_date", "date_commande") ?? ""),
     deliveryAddressLine1: String(row.delivery_address_line_1 ?? ""),
     deliveryAddressLine2: row.delivery_address_line_2 ? String(row.delivery_address_line_2) : undefined,
     deliveryPostalCode: String(row.delivery_postal_code ?? ""),
     deliveryCity: String(row.delivery_city ?? ""),
     deliveryCountry: String(row.delivery_country ?? "France"),
-    comments: row.comments ? String(row.comments) : undefined,
-    subtotalHt: Number(row.subtotal_ht ?? 0),
-    totalVat: Number(row.total_vat ?? 0),
+    comments: readField(row, "comments", "commentaire") ? String(readField(row, "comments", "commentaire")) : undefined,
+    subtotalHt: Number(readField(row, "subtotal_ht", "total_ht") ?? 0),
+    totalVat: Number(readField(row, "total_vat", "total_tva") ?? 0),
     totalTtc: Number(row.total_ttc ?? 0),
-    estimatedCommissionAmount: Number(row.estimated_commission_amount ?? 0),
+    estimatedCommissionAmount: Number(readField(row, "estimated_commission_amount", "commission_estimee") ?? 0),
     commissionRate: Number(row.commission_rate ?? 20),
     pdfUrl: row.pdf_url ? String(row.pdf_url) : undefined,
     sentAt: row.sent_at ? String(row.sent_at) : undefined,
@@ -159,14 +166,14 @@ function mapOrderItem(row: Record<string, unknown>): OrderItem {
     id: String(row.id ?? ""),
     orderId: String(row.order_id ?? ""),
     productId: row.product_id ? String(row.product_id) : undefined,
-    productReference: String(row.product_reference ?? ""),
-    productName: String(row.product_name ?? ""),
-    quantity: Number(row.quantity ?? 0),
-    unitPriceHt: Number(row.unit_price_ht ?? 0),
-    discountPercent: Number(row.discount_percent ?? 0),
-    vatRate: Number(row.vat_rate ?? 20),
-    lineTotalHt: Number(row.line_total_ht ?? 0),
-    sortOrder: Number(row.sort_order ?? 0),
+    productReference: String(readField(row, "product_reference", "reference") ?? ""),
+    productName: String(readField(row, "product_name", "nom_produit", "designation") ?? "Produit"),
+    quantity: Number(readField(row, "quantity", "quantite") ?? 0),
+    unitPriceHt: Number(readField(row, "unit_price_ht", "prix_unitaire_ht", "prix_unitaire") ?? 0),
+    discountPercent: Number(readField(row, "discount_percent", "remise_percent") ?? 0),
+    vatRate: Number(readField(row, "vat_rate", "taux_tva") ?? 20),
+    lineTotalHt: Number(readField(row, "line_total_ht", "total_ligne_ht", "sous_total") ?? 0),
+    sortOrder: Number(readField(row, "sort_order", "ordre") ?? 0),
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? "")
   };
@@ -234,7 +241,7 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
 
   const orderIds = (orderRows ?? []).map((row) => String(row.id));
   const { data: orderItemRows, error: orderItemsError } = orderIds.length
-    ? await supabase.from("order_items").select("*").in("order_id", orderIds).order("sort_order", { ascending: true })
+    ? await supabase.from("order_items").select("*").in("order_id", orderIds)
     : { data: [], error: null };
   if (orderItemsError) {
     throw new Error(`Chargement lignes de commande impossible: ${orderItemsError.message}`);
@@ -246,6 +253,13 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
     const existing = itemsByOrderId.get(item.orderId) ?? [];
     existing.push(item);
     itemsByOrderId.set(item.orderId, existing);
+  }
+  for (const [orderId, items] of itemsByOrderId) {
+    items.sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return String(a.createdAt).localeCompare(String(b.createdAt));
+    });
+    itemsByOrderId.set(orderId, items);
   }
 
   const orders = (orderRows ?? [])
