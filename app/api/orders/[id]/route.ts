@@ -108,14 +108,21 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { data: items, error: itemsError } = await supabase
       .from("order_items")
       .select("*")
-      .eq("order_id", orderId)
-      .order("sort_order");
+      .eq("order_id", orderId);
     if (itemsError) {
       console.error("ORDER ITEMS FETCH ERROR", { orderId, error: itemsError.message });
       return NextResponse.json({ ok: false, error: itemsError.message }, { status: 500 });
     }
 
-    const orderItems = (items ?? []) as DbRow[];
+    const orderItems = ((items ?? []) as DbRow[]).sort((a, b) => {
+      const aSort = Number(readItemField(a, "sort_order", "ordre") ?? 0);
+      const bSort = Number(readItemField(b, "sort_order", "ordre") ?? 0);
+      if (aSort !== bSort) return aSort - bSort;
+
+      const aCreatedAt = String(readItemField(a, "created_at") ?? "");
+      const bCreatedAt = String(readItemField(b, "created_at") ?? "");
+      return aCreatedAt.localeCompare(bCreatedAt);
+    });
     const prospectClientId = String(readOrderField(order, "prospect_client_id", "client_id") ?? "");
 
     return NextResponse.json({
@@ -152,7 +159,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           discountPercent: Number(readItemField(item, "discount_percent", "remise_percent") ?? 0),
           vatRate: Number(readItemField(item, "vat_rate", "taux_tva") ?? 0),
           lineTotalHt: Number(readItemField(item, "line_total_ht", "total_ligne_ht", "sous_total") ?? 0),
-          sortOrder: Number(readItemField(item, "sort_order") ?? 0),
+          sortOrder: Number(readItemField(item, "sort_order", "ordre") ?? 0),
           createdAt: String(readItemField(item, "created_at") ?? ""),
           updatedAt: String(readItemField(item, "updated_at") ?? "")
         }))
