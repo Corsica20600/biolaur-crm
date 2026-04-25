@@ -37,6 +37,11 @@ type EmailProductDocumentOption = {
   productName?: string;
 };
 
+type StaticAttachmentOption = {
+  key: "account_opening_form" | "pricing_sheet";
+  label: string;
+};
+
 type EmailComposerData = {
   templates: EmailTemplateOption[];
   recipients: EmailRecipientOption[];
@@ -50,6 +55,11 @@ const emptyData: EmailComposerData = {
   orders: [],
   productDocuments: []
 };
+
+const staticAttachmentOptions: StaticAttachmentOption[] = [
+  { key: "account_opening_form", label: "Formulaire ouverture de compte (pre-rempli)" },
+  { key: "pricing_sheet", label: "Tarif BIOLAUR SP 2026 - V2 CORSE" }
+];
 
 export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?: string; orderId?: string }) {
   const [data, setData] = useState<EmailComposerData>(emptyData);
@@ -159,7 +169,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
         body,
         attachments: selectedAttachments.map((value) => {
           const [type, id] = value.split(":");
-          return { type: type as "product_document" | "order_pdf", id };
+          return { type: type as "product_document" | "order_pdf" | "account_opening_form" | "pricing_sheet", id };
         })
       });
 
@@ -181,7 +191,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border border-line bg-white p-4">
+    <form onSubmit={handleSubmit} className="max-w-5xl space-y-4 rounded-lg border border-line bg-white p-4">
       <input type="hidden" name="prospectClientId" value={selectedClientId} />
       <input type="hidden" name="orderId" value={orderId ?? ""} />
       <div className="grid gap-4 md:grid-cols-3">
@@ -239,6 +249,16 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
                 onChange={(event) => toggleAttachment(`product_document:${doc.id}`, event.target.checked)}
               />
               <span>{doc.productReference ? `${doc.productReference} - ` : ""}{doc.title}</span>
+            </label>
+          ))}
+          {staticAttachmentOptions.map((attachment) => (
+            <label key={attachment.key} className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={selectedAttachments.includes(`${attachment.key}:${attachment.key}`)}
+                onChange={(event) => toggleAttachment(`${attachment.key}:${attachment.key}`, event.target.checked)}
+              />
+              <span>{attachment.label}</span>
             </label>
           ))}
         </div>

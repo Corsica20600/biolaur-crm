@@ -1,12 +1,15 @@
 "use server";
 
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { revalidatePath } from "next/cache";
+import * as XLSX from "xlsx";
 import { createOrderPdf } from "@/lib/pdf/order-pdf";
 import { requireAuthenticatedUser } from "@/lib/server-auth";
 import { createAdminClient } from "@/supabase/admin";
 
 type EmailAttachmentInput = {
-  type: "product_document" | "order_pdf";
+  type: "product_document" | "order_pdf" | "account_opening_form" | "pricing_sheet";
   id: string;
 };
 
@@ -30,6 +33,8 @@ type PreparedAttachment = {
 };
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ACCOUNT_OPENING_FORM_FILE = "FORMULAIRE OUVERTURE COMPTE CLIENT BIOLAUR SP -.xlsx";
+const PRICING_FILE = "TARIF BIOLAUR SP 2026 - V2 CORSE.xlsx";
 
 function parseEmailFrom(value?: string) {
   if (!value) return "";
@@ -140,6 +145,102 @@ function resolveStorageObject(value?: string | null, fallbackBucket = "technical
 async function blobToBase64(blob: Blob) {
   const buffer = Buffer.from(await blob.arrayBuffer());
   return buffer.toString("base64");
+}
+
+function normalizeForMatch(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function setAdjacentCellValue(sheet: XLSX.WorkSheet, labelNeedles: string[], value: string) {
+  if (!value) return false;
+  const rangeRef = sheet["!ref"];
+  if (!rangeRef) return false;
+  const range = XLSX.utils.decode_range(rangeRef);
+
+  for (let row = range.s.r; row <= range.e.r; row += 1) {
+    for (let col = range.s.c; col <= range.e.c; col += 1) {
+      const cellRef = XLSX.utils.encode_cell({ r: row, c: col });
+      const cell = sheet[cellRef];
+      if (!cell?.v) continue;
+      const text = normalizeForMatch(cell.v);
+      if (!text) continue;
+
+      if (labelNeedles.some((needle) => text.includes(normalizeForMatch(needle)))) {
+        const targetRef = XLSX.utils.encode_cell({ r: row, c: col + 1 });
+        sheet[targetRef] = { t: "s", v: value };
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+async function buildAccountOpeningFormAttachment(prospectRow: Record<string, unknown> | null) {
+  const sourcePath = path.join(process.cwd(), "Documents", ACCOUNT_OPENING_FORM_FILE);
+  const sourceBuffer = await fs.readFile(sourcePath);
+  if (!prospectRow) {
+    return {
+      fileName: ACCOUNT_OPENING_FORM_FILE,
+      fileUrl: `local/${ACCOUNT_OPENING_FORM_FILE}`,
+      brevo: { name: ACCOUNT_OPENING_FORM_FILE, content: sourceBuffer.toString("base64") } as { name: string; content: string }
+    };
+  }
+
+  const workbook = XLSX.read(sourceBuffer, { type: "buffer", cellStyles: true, cellDates: true });
+  const firstSheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[firstSheetName];
+  if (sheet) {
+    const companyName = String(readField(prospectRow, "company_name", "trade_name") ?? "").trim();
+    const tradeName = String(readField(prospectRow, "trade_name", "company_name") ?? "").trim();
+    const contactLastName = String(readField(prospectRow, "contact_last_name") ?? "").trim();
+    const contactFirstName = String(readField(prospectRow, "contact_first_name") ?? "").trim();
+    const contactFullName = [contactFirstName, contactLastName].filter(Boolean).join(" ").trim();
+    const contactJobTitle = String(readField(prospectRow, "contact_job_title") ?? "").trim();
+    const phone = String(readField(prospectRow, "phone") ?? "").trim();
+    const mobile = String(readField(prospectRow, "mobile") ?? "").trim();
+    const email = String(readField(prospectRow, "email") ?? "").trim();
+    const addressLine1 = String(readField(prospectRow, "address_line_1") ?? "").trim();
+    const postalCode = String(readField(prospectRow, "postal_code") ?? "").trim();
+    const city = String(readField(prospectRow, "city") ?? "").trim();
+    const siret = String(readField(prospectRow, "siret") ?? "").trim();
+    const vatNumber = String(readField(prospectRow, "vat_number") ?? "").trim();
+
+    setAdjacentCellValue(sheet, ["raison sociale", "societe", "entreprise"], companyName || tradeName);
+    setAdjacentCellValue(sheet, ["enseigne", "nom commercial"], tradeName || companyName);
+    setAdjacentCellValue(sheet, ["nom du contact", "contact"], contactFullName || contactLastName);
+    setAdjacentCellValue(sheet, ["fonction"], contactJobTitle);
+    setAdjacentCellValue(sheet, ["telephone", "tel"], phone || mobile);
+    setAdjacentCellValue(sheet, ["portable", "mobile"], mobile || phone);
+    setAdjacentCellValue(sheet, ["email", "mail"], email);
+    setAdjacentCellValue(sheet, ["adresse"], addressLine1);
+    setAdjacentCellValue(sheet, ["code postal"], postalCode);
+    setAdjacentCellValue(sheet, ["ville"], city);
+    setAdjacentCellValue(sheet, ["siret"], siret);
+    setAdjacentCellValue(sheet, ["tva"], vatNumber);
+  }
+
+  const outputBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
+  return {
+    fileName: ACCOUNT_OPENING_FORM_FILE,
+    fileUrl: `local/${ACCOUNT_OPENING_FORM_FILE}`,
+    brevo: { name: ACCOUNT_OPENING_FORM_FILE, content: Buffer.from(outputBuffer).toString("base64") } as { name: string; content: string }
+  };
+}
+
+async function buildPricingAttachment() {
+  const sourcePath = path.join(process.cwd(), "Documents", PRICING_FILE);
+  const sourceBuffer = await fs.readFile(sourcePath);
+  return {
+    fileName: PRICING_FILE,
+    fileUrl: `local/${PRICING_FILE}`,
+    brevo: { name: PRICING_FILE, content: sourceBuffer.toString("base64") } as { name: string; content: string }
+  };
 }
 
 async function resolveLegacyClientId(
@@ -386,7 +487,12 @@ async function promoteOrderStatus(
   }
 }
 
-async function prepareAttachments(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, ownerUserId: string) {
+async function prepareAttachments(
+  supabase: ReturnType<typeof createAdminClient>,
+  input: SendEmailInput,
+  ownerUserId: string,
+  prospectRow: Record<string, unknown> | null
+) {
   const prepared: PreparedAttachment[] = [];
   const productDocumentIds = input.attachments.filter((item) => item.type === "product_document").map((item) => item.id);
 
@@ -438,6 +544,26 @@ async function prepareAttachments(supabase: ReturnType<typeof createAdminClient>
     });
   }
 
+  if (input.attachments.some((item) => item.type === "account_opening_form")) {
+    const openingForm = await buildAccountOpeningFormAttachment(prospectRow);
+    prepared.push({
+      attachmentType: "client_document",
+      fileName: openingForm.fileName,
+      fileUrl: openingForm.fileUrl,
+      brevo: openingForm.brevo
+    });
+  }
+
+  if (input.attachments.some((item) => item.type === "pricing_sheet")) {
+    const pricingSheet = await buildPricingAttachment();
+    prepared.push({
+      attachmentType: "client_document",
+      fileName: pricingSheet.fileName,
+      fileUrl: pricingSheet.fileUrl,
+      brevo: pricingSheet.brevo
+    });
+  }
+
   return prepared;
 }
 
@@ -485,7 +611,7 @@ export async function sendCrmEmail(input: SendEmailInput) {
       clientId: legacyClientId ?? undefined
     };
 
-    const attachments = await prepareAttachments(supabase, emailInput, user.id);
+    const attachments = await prepareAttachments(supabase, emailInput, user.id, prospectRow);
 
     const responseBrevo = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",

@@ -53,23 +53,18 @@ export function DocumentUploader({
       ref={formRef}
       action={formAction}
       onSubmit={() => setHasSubmitted(true)}
-      className="rounded-lg border border-dashed border-line bg-white p-4"
+      className="max-w-5xl rounded-lg border border-dashed border-line bg-white p-4"
     >
       {productId ? <input type="hidden" name="productId" value={productId} /> : null}
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
         <div className="grid h-11 w-11 place-items-center rounded-md bg-mint text-leaf">
           <UploadCloud className="h-5 w-5" />
         </div>
-        <div className="flex-1">
+        <div className="min-w-[180px]">
           <p className="text-sm font-medium text-ink">Ajouter un document</p>
-          <p className="text-xs text-slate-500">
-            {allowedTypes.includes("bon_commande") || allowedTypes.includes("autre")
-              ? "Buckets prevus : technical-sheets, safety-sheets, order-pdfs, client-documents."
-              : "Buckets prevus : technical-sheets, safety-sheets."}
-          </p>
         </div>
         {!productId ? (
-          <select name="productId" required className="focus-ring h-10 rounded-md border border-line px-3 text-sm">
+          <select name="productId" required className="focus-ring h-10 min-w-[280px] rounded-md border border-line px-3 text-sm">
             <option value="">Selectionner un produit</option>
             {products.map((product) => (
               <option key={product.id} value={product.id}>
@@ -78,7 +73,7 @@ export function DocumentUploader({
             ))}
           </select>
         ) : null}
-        <select name="type" className="focus-ring h-10 rounded-md border border-line px-3 text-sm">
+        <select name="type" className="focus-ring h-10 min-w-[180px] rounded-md border border-line px-3 text-sm">
           {uploadTypeOptions.filter((option) => allowedTypes.includes(option.value)).map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
