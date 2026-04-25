@@ -16,12 +16,18 @@ export type CreateCommercialActionState = {
 
 type CommercialActionInsertPayload = {
   owner_user_id: string;
+  owner_id: string;
   prospect_client_id: string;
+  client_id: string | null;
   action_type: string;
   type: string;
+  action_status: string;
   statut: string;
+  action_date: string;
   date_action: string;
+  summary: string;
   compte_rendu: string;
+  details: string | null;
   prochaine_action: string | null;
   date_prochaine_action: string | null;
 };
@@ -128,12 +134,18 @@ export async function createCommercialAction(
 
   const payload: CommercialActionInsertPayload = {
     owner_user_id: user.id,
+    owner_id: user.id,
     prospect_client_id: prospectClientId,
+    client_id: null,
     action_type: normalizedActionType,
     type: actionType,
+    action_status: actionStatus,
     statut: actionStatus,
+    action_date: actionDate || new Date().toISOString(),
     date_action: actionDate || new Date().toISOString(),
+    summary,
     compte_rendu: summary,
+    details: clean(formData.get("details")) || null,
     prochaine_action: clean(formData.get("details")) || null,
     date_prochaine_action: nextActionDate || null
   };

@@ -60,6 +60,7 @@ type AutomationStats = {
 
 type ContextData = {
   prospects: DbRow[];
+  legacyClients: DbRow[];
   actions: DbRow[];
   orders: DbRow[];
   emailLogs: DbRow[];
@@ -115,6 +116,27 @@ function extractMissingColumn(message: string) {
   return fromPostgres ?? null;
 }
 
+function extractNotNullColumn(message: string) {
+  const match = message.match(/null value in column "([^"]+)"/i);
+  return match?.[1] ?? null;
+}
+
+function extractForeignKeyColumn(message: string) {
+  const constraint = message.match(/foreign key constraint "([^"]+)"/i)?.[1] ?? "";
+  if (constraint.includes("_client_id_")) return "client_id";
+  if (constraint.includes("_prospect_client_id_")) return "prospect_client_id";
+  return null;
+}
+
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function normalizeActionStatus(row: DbRow): ActionStatus {
   const raw = asString(readField(row, "action_status", "statut")).toLowerCase();
   if (raw === "fait") return "fait";
@@ -149,7 +171,7 @@ function getContactEmail(row: DbRow) {
   return asString(readField(row, "email", "contact_email", "mail"));
 }
 
-function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCandidate) {
+function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCandidate, legacyClientId: string | null) {
   const isExtendedType = candidate.actionType === "reassort" || candidate.actionType === "prospection";
   const actionType = isExtendedType ? "relance" : candidate.actionType;
   const nextActionType = candidate.nextActionType
@@ -162,6 +184,7 @@ function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCand
     owner_user_id: ownerUserId,
     owner_id: ownerUserId,
     prospect_client_id: candidate.prospectClientId,
+    client_id: legacyClientId,
     action_type: actionType,
     type: candidate.actionType,
     action_status: "a_faire",
@@ -189,6 +212,17 @@ async function insertCommercialActionCompat(supabase: ReturnType<typeof createAd
       delete workingPayload[missingColumn];
       continue;
     }
+
+    const foreignKeyColumn = extractForeignKeyColumn(error.message ?? "");
+    if (foreignKeyColumn && Object.prototype.hasOwnProperty.call(workingPayload, foreignKeyColumn)) {
+      delete workingPayload[foreignKeyColumn];
+      continue;
+    }
+
+    const notNullColumn = extractNotNullColumn(error.message ?? "");
+    if (notNullColumn && Object.prototype.hasOwnProperty.call(workingPayload, notNullColumn)) {
+      throw new Error(`NOT_NULL:${notNullColumn}:${error.message ?? "Insertion commercial_actions impossible."}`);
+    }
     throw new Error(error.message ?? "Insertion commercial_actions impossible.");
   }
   throw new Error("Insertion commercial_actions impossible: compatibilite schema epuisee.");
@@ -207,25 +241,79 @@ async function fetchOwnedRows(supabase: ReturnType<typeof createAdminClient>, ta
   return primary;
 }
 
+async function fetchOwnedRowsOptional(supabase: ReturnType<typeof createAdminClient>, table: string, userId: string, orderByColumn?: string) {
+  const result = await fetchOwnedRows(supabase, table, userId, orderByColumn);
+  const message = result.error?.message ?? "";
+  if (message.toLowerCase().includes("relation") && message.toLowerCase().includes("does not exist")) {
+    return { data: [] as unknown[], error: null as null };
+  }
+  return result;
+}
+
 async function loadContext(supabase: ReturnType<typeof createAdminClient>, userId: string): Promise<ContextData> {
-  const [prospectsResult, actionsResult, ordersResult, emailLogsResult, templatesResult] = await Promise.all([
+  const [prospectsResult, legacyClientsResult, actionsResult, ordersResult, emailLogsResult, templatesResult] = await Promise.all([
     fetchOwnedRows(supabase, "prospects_clients", userId, "updated_at"),
+    fetchOwnedRowsOptional(supabase, "clients", userId, "updated_at"),
     fetchOwnedRows(supabase, "commercial_actions", userId, "created_at"),
     fetchOwnedRows(supabase, "orders", userId, "created_at"),
     fetchOwnedRows(supabase, "email_logs", userId, "created_at"),
     supabase.from("email_templates").select("*").eq("is_active", true)
   ]);
 
-  const firstError = prospectsResult.error ?? actionsResult.error ?? ordersResult.error ?? emailLogsResult.error ?? templatesResult.error;
+  const firstError = prospectsResult.error ?? legacyClientsResult.error ?? actionsResult.error ?? ordersResult.error ?? emailLogsResult.error ?? templatesResult.error;
   if (firstError) throw new Error(firstError.message);
 
   return {
     prospects: (prospectsResult.data ?? []) as DbRow[],
+    legacyClients: (legacyClientsResult.data ?? []) as DbRow[],
     actions: (actionsResult.data ?? []) as DbRow[],
     orders: (ordersResult.data ?? []) as DbRow[],
     emailLogs: (emailLogsResult.data ?? []) as DbRow[],
     templates: (templatesResult.data ?? []) as DbRow[]
   };
+}
+
+function resolveLegacyClientId(prospect: DbRow, legacyClients: DbRow[]) {
+  const prospectId = asString(readField(prospect, "id"));
+  if (!prospectId || !legacyClients.length) return null;
+
+  const direct = legacyClients.find((row) => asString(readField(row, "id")) === prospectId);
+  if (direct) return asString(readField(direct, "id"));
+
+  const mapped = legacyClients.find((row) => {
+    const linkedId = asString(readField(row, "prospect_client_id", "prospect_id", "prospectId", "crm_prospect_id"));
+    return linkedId && linkedId === prospectId;
+  });
+  if (mapped) return asString(readField(mapped, "id"));
+
+  const prospectEmail = normalizeText(readField(prospect, "email", "contact_email", "mail"));
+  if (prospectEmail) {
+    const byEmail = legacyClients.find((row) => normalizeText(readField(row, "email", "contact_email", "mail")) === prospectEmail);
+    if (byEmail) return asString(readField(byEmail, "id"));
+  }
+
+  const candidateNames = [
+    normalizeText(readField(prospect, "trade_name")),
+    normalizeText(readField(prospect, "company_name")),
+    normalizeText(readField(prospect, "name"))
+  ].filter(Boolean);
+
+  if (candidateNames.length) {
+    const byName = legacyClients.find((row) => {
+      const names = [
+        normalizeText(readField(row, "trade_name")),
+        normalizeText(readField(row, "company_name")),
+        normalizeText(readField(row, "raison_sociale")),
+        normalizeText(readField(row, "nom_societe")),
+        normalizeText(readField(row, "societe")),
+        normalizeText(readField(row, "name"))
+      ].filter(Boolean);
+      return names.some((name) => candidateNames.includes(name));
+    });
+    if (byName) return asString(readField(byName, "id"));
+  }
+
+  return null;
 }
 
 function prospectName(row: DbRow) {
@@ -457,8 +545,19 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
 
   let createdCount = 0;
   for (const candidate of candidates.slice(0, maxCreates)) {
-    await insertCommercialActionCompat(supabase, buildActionInsertPayload(userId, candidate));
-    createdCount += 1;
+    const prospect = context.prospects.find((row) => asString(readField(row, "id")) === candidate.prospectClientId);
+    const legacyClientId = prospect ? resolveLegacyClientId(prospect, context.legacyClients) : null;
+
+    try {
+      await insertCommercialActionCompat(supabase, buildActionInsertPayload(userId, candidate, legacyClientId));
+      createdCount += 1;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Insertion commercial_actions impossible.";
+      if (message.startsWith("NOT_NULL:client_id:")) {
+        continue;
+      }
+      throw error;
+    }
   }
 
   const refreshedContext = createdCount > 0 ? await loadContext(supabase, userId) : context;
