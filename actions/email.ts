@@ -147,6 +147,31 @@ async function blobToBase64(blob: Blob) {
   return buffer.toString("base64");
 }
 
+async function readLocalDocumentFile(fileName: string) {
+  const candidates = [
+    path.join(process.cwd(), "Documents", fileName),
+    path.join(process.cwd(), "..", "Documents", fileName),
+    path.resolve("C:/dev/Biolaur/Documents", fileName),
+    path.resolve("Documents", fileName)
+  ];
+
+  const initCwd = process.env.INIT_CWD;
+  if (initCwd) {
+    candidates.unshift(path.join(initCwd, "Documents", fileName));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      return await fs.readFile(candidate);
+    } catch {
+      // try next candidate
+    }
+  }
+
+  throw new Error(`Fichier introuvable: ${fileName}`);
+}
+
 function normalizeForMatch(value: unknown) {
   return String(value ?? "")
     .normalize("NFD")
@@ -182,8 +207,7 @@ function setAdjacentCellValue(sheet: XLSX.WorkSheet, labelNeedles: string[], val
 }
 
 async function buildAccountOpeningFormAttachment(prospectRow: Record<string, unknown> | null) {
-  const sourcePath = path.join(process.cwd(), "Documents", ACCOUNT_OPENING_FORM_FILE);
-  const sourceBuffer = await fs.readFile(sourcePath);
+  const sourceBuffer = await readLocalDocumentFile(ACCOUNT_OPENING_FORM_FILE);
   if (!prospectRow) {
     return {
       fileName: ACCOUNT_OPENING_FORM_FILE,
@@ -234,8 +258,7 @@ async function buildAccountOpeningFormAttachment(prospectRow: Record<string, unk
 }
 
 async function buildPricingAttachment() {
-  const sourcePath = path.join(process.cwd(), "Documents", PRICING_FILE);
-  const sourceBuffer = await fs.readFile(sourcePath);
+  const sourceBuffer = await readLocalDocumentFile(PRICING_FILE);
   return {
     fileName: PRICING_FILE,
     fileUrl: `local/${PRICING_FILE}`,
