@@ -55,6 +55,7 @@ type AutomationStats = {
   createdCount: number;
   skippedDuplicateCount: number;
   skippedOptOutCount: number;
+  skippedInsertErrorCount: number;
   generatedAt: string;
 };
 
@@ -207,6 +208,7 @@ async function insertCommercialActionCompat(supabase: ReturnType<typeof createAd
     const { error } = await supabase.from("commercial_actions").insert(workingPayload);
     if (!error) return;
 
+    const message = error.message ?? "Insertion commercial_actions impossible.";
     const missingColumn = extractMissingColumn(error.message ?? "");
     if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
       delete workingPayload[missingColumn];
@@ -214,16 +216,19 @@ async function insertCommercialActionCompat(supabase: ReturnType<typeof createAd
     }
 
     const foreignKeyColumn = extractForeignKeyColumn(error.message ?? "");
+    if (foreignKeyColumn === "client_id") {
+      throw new Error(`FK:client_id:${message}`);
+    }
     if (foreignKeyColumn && Object.prototype.hasOwnProperty.call(workingPayload, foreignKeyColumn)) {
       delete workingPayload[foreignKeyColumn];
       continue;
     }
 
     const notNullColumn = extractNotNullColumn(error.message ?? "");
-    if (notNullColumn && Object.prototype.hasOwnProperty.call(workingPayload, notNullColumn)) {
-      throw new Error(`NOT_NULL:${notNullColumn}:${error.message ?? "Insertion commercial_actions impossible."}`);
+    if (notNullColumn) {
+      throw new Error(`NOT_NULL:${notNullColumn}:${message}`);
     }
-    throw new Error(error.message ?? "Insertion commercial_actions impossible.");
+    throw new Error(message);
   }
   throw new Error("Insertion commercial_actions impossible: compatibilite schema epuisee.");
 }
@@ -314,6 +319,15 @@ function resolveLegacyClientId(prospect: DbRow, legacyClients: DbRow[]) {
   }
 
   return null;
+}
+
+function isInsertCompatibilityError(message: string) {
+  return (
+    message.startsWith("NOT_NULL:client_id:") ||
+    message.startsWith("FK:client_id:") ||
+    message.toLowerCase().includes("violates not-null constraint") ||
+    message.toLowerCase().includes("violates foreign key constraint")
+  );
 }
 
 function prospectName(row: DbRow) {
@@ -542,6 +556,7 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
   const context = await loadContext(supabase, userId);
   const { candidates, skippedDuplicateCount, skippedOptOutCount } = buildAutomationCandidates(context, now);
   const maxCreates = mode === "load" ? 12 : 150;
+  let skippedInsertErrorCount = 0;
 
   let createdCount = 0;
   for (const candidate of candidates.slice(0, maxCreates)) {
@@ -553,7 +568,8 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
       createdCount += 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Insertion commercial_actions impossible.";
-      if (message.startsWith("NOT_NULL:client_id:")) {
+      if (isInsertCompatibilityError(message)) {
+        skippedInsertErrorCount += 1;
         continue;
       }
       throw error;
@@ -562,7 +578,7 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
 
   const refreshedContext = createdCount > 0 ? await loadContext(supabase, userId) : context;
   return {
-    stats: { createdCount, skippedDuplicateCount, skippedOptOutCount, generatedAt: now.toISOString() },
+    stats: { createdCount, skippedDuplicateCount, skippedOptOutCount, skippedInsertErrorCount, generatedAt: now.toISOString() },
     context: refreshedContext,
     campaigns: buildCampaigns(refreshedContext, now)
   };

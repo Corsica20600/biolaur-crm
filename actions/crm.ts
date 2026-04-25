@@ -36,6 +36,20 @@ function clean(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
 }
 
+function extractMissingColumn(message: string) {
+  const fromPostgrest = message.match(/Could not find the '([^']+)' column/i)?.[1];
+  if (fromPostgrest) return fromPostgrest;
+  const fromPostgres = message.match(/column "([^"]+)" of relation/i)?.[1] ?? message.match(/column "([^"]+)" does not exist/i)?.[1];
+  return fromPostgres ?? null;
+}
+
+function extractForeignKeyColumn(message: string) {
+  const constraint = message.match(/foreign key constraint "([^"]+)"/i)?.[1] ?? "";
+  if (constraint.includes("_client_id_")) return "client_id";
+  if (constraint.includes("_prospect_client_id_")) return "prospect_client_id";
+  return null;
+}
+
 export async function saveProspectClient(
   _previousState: SaveProspectClientState,
   formData: FormData
@@ -150,10 +164,35 @@ export async function createCommercialAction(
     date_prochaine_action: nextActionDate || null
   };
 
-  const { error } = await supabase.from("commercial_actions").insert(payload);
+  const workingPayload: Record<string, unknown> = { ...payload };
+  let insertError = "";
+  let inserted = false;
 
-  if (error) {
-    return { ok: false, message: error.message };
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const { error } = await supabase.from("commercial_actions").insert(workingPayload);
+    if (!error) {
+      inserted = true;
+      break;
+    }
+
+    insertError = error.message ?? "Insertion commercial_actions impossible.";
+    const missingColumn = extractMissingColumn(insertError);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+      delete workingPayload[missingColumn];
+      continue;
+    }
+
+    const foreignKeyColumn = extractForeignKeyColumn(insertError);
+    if (foreignKeyColumn && Object.prototype.hasOwnProperty.call(workingPayload, foreignKeyColumn)) {
+      delete workingPayload[foreignKeyColumn];
+      continue;
+    }
+
+    break;
+  }
+
+  if (!inserted) {
+    return { ok: false, message: insertError || "Insertion commercial_actions impossible." };
   }
 
   revalidatePath(`/crm/${prospectClientId}`);
