@@ -78,6 +78,15 @@ function isMissingOwnerUserColumn(message: string) {
   return lower.includes("owner_user_id") && (lower.includes("column") || lower.includes("could not find"));
 }
 
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function readField(row: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) {
     const value = row[key];
@@ -131,6 +140,58 @@ function resolveStorageObject(value?: string | null, fallbackBucket = "technical
 async function blobToBase64(blob: Blob) {
   const buffer = Buffer.from(await blob.arrayBuffer());
   return buffer.toString("base64");
+}
+
+async function resolveLegacyClientId(
+  supabase: ReturnType<typeof createAdminClient>,
+  ownerUserId: string,
+  prospectRow: Record<string, unknown> | null
+) {
+  if (!prospectRow) return null;
+
+  const prospectId = String(readField(prospectRow, "id") ?? "");
+  const prospectEmail = normalizeText(readField(prospectRow, "email", "contact_email", "mail"));
+  const prospectNames = [
+    normalizeText(readField(prospectRow, "trade_name")),
+    normalizeText(readField(prospectRow, "company_name")),
+    normalizeText(readField(prospectRow, "name"))
+  ].filter(Boolean);
+
+  const { data: clients, error } = await supabase.from("clients").select("*").eq("owner_user_id", ownerUserId).limit(500);
+  if (error || !clients?.length) return null;
+
+  const rows = clients as Record<string, unknown>[];
+
+  const direct = rows.find((row) => String(readField(row, "id") ?? "") === prospectId);
+  if (direct) return String(readField(direct, "id") ?? "");
+
+  const linked = rows.find((row) => {
+    const linkedId = String(readField(row, "prospect_client_id", "prospect_id", "prospectId", "crm_prospect_id") ?? "");
+    return linkedId && linkedId === prospectId;
+  });
+  if (linked) return String(readField(linked, "id") ?? "");
+
+  if (prospectEmail) {
+    const byEmail = rows.find((row) => normalizeText(readField(row, "email", "contact_email", "mail")) === prospectEmail);
+    if (byEmail) return String(readField(byEmail, "id") ?? "");
+  }
+
+  if (prospectNames.length) {
+    const byName = rows.find((row) => {
+      const names = [
+        normalizeText(readField(row, "trade_name")),
+        normalizeText(readField(row, "company_name")),
+        normalizeText(readField(row, "raison_sociale")),
+        normalizeText(readField(row, "nom_societe")),
+        normalizeText(readField(row, "societe")),
+        normalizeText(readField(row, "name"))
+      ].filter(Boolean);
+      return names.some((name) => prospectNames.includes(name));
+    });
+    if (byName) return String(readField(byName, "id") ?? "");
+  }
+
+  return null;
 }
 
 async function insertEmailLog(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, userId: string) {
@@ -328,19 +389,27 @@ export async function sendCrmEmail(input: SendEmailInput) {
     }
 
     const supabase = createAdminClient();
+    let prospectRow: Record<string, unknown> | null = null;
     if (input.prospectClientId) {
-      const { data: prospectRow, error: prospectError } = await supabase
+      const { data, error: prospectError } = await supabase
         .from("prospects_clients")
         .select("*")
         .eq("id", input.prospectClientId)
         .maybeSingle();
       if (prospectError) return { ok: false, message: prospectError.message };
-      if (prospectRow && isOptOut(prospectRow as Record<string, unknown>)) {
+      prospectRow = (data as Record<string, unknown> | null) ?? null;
+      if (prospectRow && isOptOut(prospectRow)) {
         return { ok: false, message: "Envoi bloque: ce contact est opt-out / ne plus contacter." };
       }
     }
 
-    const attachments = await prepareAttachments(supabase, input, user.id);
+    const legacyClientId = await resolveLegacyClientId(supabase, user.id, prospectRow);
+    const emailInput: SendEmailInput = {
+      ...input,
+      clientId: legacyClientId ?? undefined
+    };
+
+    const attachments = await prepareAttachments(supabase, emailInput, user.id);
 
     const responseBrevo = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -377,9 +446,9 @@ export async function sendCrmEmail(input: SendEmailInput) {
     }
 
     try {
-      const emailLogId = await insertEmailLog(supabase, input, user.id);
+      const emailLogId = await insertEmailLog(supabase, emailInput, user.id);
       await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
-      await insertCommercialActionDone(supabase, user.id, input.prospectClientId, input.subject, input.body);
+      await insertCommercialActionDone(supabase, user.id, emailInput.prospectClientId, emailInput.subject, emailInput.body);
 
       revalidatePath("/emails");
       revalidatePath("/actions");
@@ -388,18 +457,23 @@ export async function sendCrmEmail(input: SendEmailInput) {
       const historyMessage = historyError instanceof Error ? historyError.message : "Historisation email impossible.";
       console.error("EMAIL HISTORY ERROR", {
         userId: user.id,
-        prospectClientId: input.prospectClientId,
-        orderId: input.orderId,
-        recipient: input.to,
-        subject: input.subject,
+        prospectClientId: emailInput.prospectClientId,
+        orderId: emailInput.orderId,
+        recipient: emailInput.to,
+        subject: emailInput.subject,
         historyMessage
       });
 
       revalidatePath("/emails");
       revalidatePath("/actions");
+      const isLegacyConstraintIssue =
+        historyMessage.toLowerCase().includes("email_logs") &&
+        (historyMessage.toLowerCase().includes("client_id") || historyMessage.toLowerCase().includes("foreign key"));
       return {
         ok: true,
-        message: `Email envoye. Historisation partielle: ${historyMessage}`
+        message: isLegacyConstraintIssue
+          ? "Email envoye. Historisation partielle indisponible sur ce schema legacy."
+          : "Email envoye. Historisation partielle indisponible."
       };
     }
   } catch (error) {
