@@ -4,11 +4,20 @@ import Link from "next/link";
 import { DataTable } from "@/components/ui/data-table";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatDate } from "@/lib/utils";
+import type { convertProspectToClient as convertProspectToClientAction } from "@/actions/crm";
 import type { ProspectClient } from "@/types/crm";
 
 type Option = { label: string; value: string };
 
-export function CrmTable({ rows, cityOptions }: { rows: ProspectClient[]; cityOptions: Option[] }) {
+export function CrmTable({
+  rows,
+  cityOptions,
+  convertProspectToClient
+}: {
+  rows: ProspectClient[];
+  cityOptions: Option[];
+  convertProspectToClient: typeof convertProspectToClientAction;
+}) {
   return (
     <DataTable<ProspectClient>
       rows={rows}
@@ -43,7 +52,12 @@ export function CrmTable({ rows, cityOptions }: { rows: ProspectClient[]; cityOp
           header: "Action",
           render: (row) =>
             row.recordType === "prospect" ? (
-              <button className="focus-ring rounded-md border border-line px-3 py-1.5 text-xs font-medium text-leaf">Transformer</button>
+              <form action={convertProspectToClient}>
+                <input type="hidden" name="prospectClientId" value={row.id} />
+                <button type="submit" className="focus-ring rounded-md border border-line px-3 py-1.5 text-xs font-medium text-leaf">
+                  Transformer
+                </button>
+              </form>
             ) : (
               <Link href="/orders/new" className="focus-ring rounded-md border border-line px-3 py-1.5 text-xs font-medium text-leaf">
                 Commander

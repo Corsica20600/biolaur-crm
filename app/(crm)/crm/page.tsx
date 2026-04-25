@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
 import { CrmTable } from "@/app/(crm)/crm/crm-table";
+import { convertProspectToClient } from "@/actions/crm";
 import { PageHeader } from "@/components/page-header";
 import { createClient } from "@/supabase/server";
 import type { ProspectClient } from "@/types/crm";
@@ -112,7 +113,7 @@ export default async function CrmPage() {
           </>
         }
       />
-      <CrmTable rows={rows} cityOptions={cityOptions} />
+      <CrmTable rows={rows} cityOptions={cityOptions} convertProspectToClient={convertProspectToClient} />
     </>
   );
 }
