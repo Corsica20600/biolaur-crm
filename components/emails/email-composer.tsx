@@ -191,7 +191,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
   }
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-5xl space-y-4 rounded-lg border border-line bg-white p-4">
+    <form onSubmit={handleSubmit} className="max-w-4xl space-y-4 rounded-lg border border-line bg-white p-4">
       <input type="hidden" name="prospectClientId" value={selectedClientId} />
       <input type="hidden" name="orderId" value={orderId ?? ""} />
       <div className="grid gap-4 md:grid-cols-3">

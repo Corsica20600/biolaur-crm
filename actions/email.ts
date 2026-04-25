@@ -147,6 +147,45 @@ async function blobToBase64(blob: Blob) {
   return buffer.toString("base64");
 }
 
+async function readStorageDocumentFile(
+  supabase: ReturnType<typeof createAdminClient>,
+  fileName: string,
+  options?: { preferredBucket?: string; preferredPath?: string }
+) {
+  const tried: string[] = [];
+  const buckets = [
+    options?.preferredBucket,
+    "client-documents",
+    "technical-sheets",
+    "safety-sheets",
+    "order-pdfs"
+  ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index);
+
+  const paths = [
+    options?.preferredPath,
+    fileName,
+    `templates/${fileName}`,
+    `client-documents/${fileName}`,
+    `client-documents/templates/${fileName}`,
+    `static/${fileName}`
+  ].filter((value, index, array): value is string => Boolean(value) && array.indexOf(value) === index);
+
+  for (const bucket of buckets) {
+    for (const storagePath of paths) {
+      tried.push(`${bucket}/${storagePath}`);
+      const { data, error } = await supabase.storage.from(bucket).download(storagePath);
+      if (!error && data) {
+        return {
+          buffer: Buffer.from(await data.arrayBuffer()),
+          fileUrl: `${bucket}/${storagePath}`
+        };
+      }
+    }
+  }
+
+  throw new Error(`Fichier introuvable en storage: ${fileName} (essais: ${tried.join(", ")})`);
+}
+
 async function readLocalDocumentFile(fileName: string) {
   async function findFileRecursively(baseDir: string, targetFileName: string, depth: number): Promise<string | null> {
     if (depth < 0) return null;
@@ -246,12 +285,29 @@ function setAdjacentCellValue(sheet: XLSX.WorkSheet, labelNeedles: string[], val
   return false;
 }
 
-async function buildAccountOpeningFormAttachment(prospectRow: Record<string, unknown> | null) {
-  const sourceBuffer = await readLocalDocumentFile(ACCOUNT_OPENING_FORM_FILE);
+async function buildAccountOpeningFormAttachment(
+  supabase: ReturnType<typeof createAdminClient>,
+  prospectRow: Record<string, unknown> | null
+) {
+  const preferredBucket = process.env.STATIC_ACCOUNT_OPENING_FORM_BUCKET;
+  const preferredPath = process.env.STATIC_ACCOUNT_OPENING_FORM_PATH;
+  let sourceBuffer: Buffer;
+  let sourceUrl = `local/${ACCOUNT_OPENING_FORM_FILE}`;
+  try {
+    const storageFile = await readStorageDocumentFile(supabase, ACCOUNT_OPENING_FORM_FILE, {
+      preferredBucket,
+      preferredPath
+    });
+    sourceBuffer = storageFile.buffer;
+    sourceUrl = storageFile.fileUrl;
+  } catch {
+    sourceBuffer = await readLocalDocumentFile(ACCOUNT_OPENING_FORM_FILE);
+  }
+
   if (!prospectRow) {
     return {
       fileName: ACCOUNT_OPENING_FORM_FILE,
-      fileUrl: `local/${ACCOUNT_OPENING_FORM_FILE}`,
+      fileUrl: sourceUrl,
       brevo: { name: ACCOUNT_OPENING_FORM_FILE, content: sourceBuffer.toString("base64") } as { name: string; content: string }
     };
   }
@@ -292,16 +348,30 @@ async function buildAccountOpeningFormAttachment(prospectRow: Record<string, unk
   const outputBuffer = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" });
   return {
     fileName: ACCOUNT_OPENING_FORM_FILE,
-    fileUrl: `local/${ACCOUNT_OPENING_FORM_FILE}`,
+    fileUrl: sourceUrl,
     brevo: { name: ACCOUNT_OPENING_FORM_FILE, content: Buffer.from(outputBuffer).toString("base64") } as { name: string; content: string }
   };
 }
 
-async function buildPricingAttachment() {
-  const sourceBuffer = await readLocalDocumentFile(PRICING_FILE);
+async function buildPricingAttachment(supabase: ReturnType<typeof createAdminClient>) {
+  const preferredBucket = process.env.STATIC_PRICING_SHEET_BUCKET;
+  const preferredPath = process.env.STATIC_PRICING_SHEET_PATH;
+  let sourceBuffer: Buffer;
+  let sourceUrl = `local/${PRICING_FILE}`;
+  try {
+    const storageFile = await readStorageDocumentFile(supabase, PRICING_FILE, {
+      preferredBucket,
+      preferredPath
+    });
+    sourceBuffer = storageFile.buffer;
+    sourceUrl = storageFile.fileUrl;
+  } catch {
+    sourceBuffer = await readLocalDocumentFile(PRICING_FILE);
+  }
+
   return {
     fileName: PRICING_FILE,
-    fileUrl: `local/${PRICING_FILE}`,
+    fileUrl: sourceUrl,
     brevo: { name: PRICING_FILE, content: sourceBuffer.toString("base64") } as { name: string; content: string }
   };
 }
@@ -608,7 +678,7 @@ async function prepareAttachments(
   }
 
   if (input.attachments.some((item) => item.type === "account_opening_form")) {
-    const openingForm = await buildAccountOpeningFormAttachment(prospectRow);
+    const openingForm = await buildAccountOpeningFormAttachment(supabase, prospectRow);
     prepared.push({
       attachmentType: "client_document",
       fileName: openingForm.fileName,
@@ -618,7 +688,7 @@ async function prepareAttachments(
   }
 
   if (input.attachments.some((item) => item.type === "pricing_sheet")) {
-    const pricingSheet = await buildPricingAttachment();
+    const pricingSheet = await buildPricingAttachment(supabase);
     prepared.push({
       attachmentType: "client_document",
       fileName: pricingSheet.fileName,

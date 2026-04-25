@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr">
-      <body className={`${inter.className} antialiased`}>{children}</body>
+      <body className={`${inter.className} max-w-full overflow-x-hidden antialiased`}>{children}</body>
     </html>
   );
 }

@@ -148,8 +148,8 @@ export function AppShell({ children, companyCard = defaultCompanyCard }: { child
         </div>
       ) : null}
 
-      <main className="overflow-x-hidden xl:pl-80">
-        <div className="mx-auto max-w-[1260px] px-4 py-6 md:px-6 md:py-8 xl:px-8">{children}</div>
+      <main className="max-w-full overflow-x-hidden xl:pl-80">
+        <div className="mx-auto max-w-[1140px] px-4 py-6 md:px-6 md:py-8 xl:px-8">{children}</div>
       </main>
     </div>
   );

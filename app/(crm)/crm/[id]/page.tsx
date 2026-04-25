@@ -332,7 +332,7 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+      <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_280px]">
         <div className="min-w-0 space-y-6">
           <section className="rounded-lg border border-line bg-white p-4">
             <div className="mb-4 flex flex-wrap items-center gap-2">

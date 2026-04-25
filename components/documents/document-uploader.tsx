@@ -53,7 +53,7 @@ export function DocumentUploader({
       ref={formRef}
       action={formAction}
       onSubmit={() => setHasSubmitted(true)}
-      className="max-w-5xl rounded-lg border border-dashed border-line bg-white p-4"
+      className="max-w-4xl rounded-lg border border-dashed border-line bg-white p-4"
     >
       {productId ? <input type="hidden" name="productId" value={productId} /> : null}
       <div className="flex flex-wrap items-center gap-3">

@@ -27,7 +27,7 @@ export function CommercialActionForm({
   }, [router, state.ok]);
 
   return (
-    <form ref={formRef} action={formAction} className="max-w-5xl rounded-lg border border-line bg-white p-4">
+    <form ref={formRef} action={formAction} className="max-w-4xl rounded-lg border border-line bg-white p-4">
       <input type="hidden" name="prospectClientId" value={prospectClientId} />
       <div className="grid gap-3 md:grid-cols-[minmax(220px,380px)_minmax(160px,220px)]">
         <label>
