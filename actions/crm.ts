@@ -393,14 +393,17 @@ export async function setCommercialActionStatus(formData: FormData): Promise<voi
     .from("commercial_actions")
     .update(payload)
     .eq("id", actionId)
-    .eq("owner_user_id", user.id);
+    .eq("owner_user_id", user.id)
+    .select("id");
 
-  if (primary.error && isMissingOwnerUserColumn(primary.error.message ?? "")) {
-    await supabase
-      .from("commercial_actions")
-      .update(payload)
-      .eq("id", actionId)
-      .eq("owner_id", user.id);
+  const primaryUpdatedCount = Array.isArray(primary.data) ? primary.data.length : 0;
+  const shouldFallbackToOwnerId =
+    !primary.error && primaryUpdatedCount === 0
+      ? true
+      : Boolean(primary.error && isMissingOwnerUserColumn(primary.error.message ?? ""));
+
+  if (shouldFallbackToOwnerId) {
+    await supabase.from("commercial_actions").update(payload).eq("id", actionId).eq("owner_id", user.id);
   }
 
   revalidatePath(`/crm/${prospectClientId}`);

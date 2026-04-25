@@ -148,9 +148,33 @@ async function blobToBase64(blob: Blob) {
 }
 
 async function readLocalDocumentFile(fileName: string) {
+  async function findFileRecursively(baseDir: string, targetFileName: string, depth: number): Promise<string | null> {
+    if (depth < 0) return null;
+    try {
+      const entries = await fs.readdir(baseDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(baseDir, entry.name);
+        if (entry.isFile() && entry.name === targetFileName) return fullPath;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith(".next") || entry.name.startsWith("node_modules")) continue;
+        const found = await findFileRecursively(path.join(baseDir, entry.name), targetFileName, depth - 1);
+        if (found) return found;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
   const candidates = [
     path.join(process.cwd(), "Documents", fileName),
     path.join(process.cwd(), "..", "Documents", fileName),
+    path.join(process.cwd(), "..", "..", "Documents", fileName),
+    path.join(path.sep, "var", "task", "Documents", fileName),
+    path.join(path.sep, "workspace", "Documents", fileName),
+    path.join(path.sep, "mnt", "c", "dev", "Biolaur", "Documents", fileName),
     path.resolve("C:/dev/Biolaur/Documents", fileName),
     path.resolve("Documents", fileName)
   ];
@@ -166,6 +190,22 @@ async function readLocalDocumentFile(fileName: string) {
       return await fs.readFile(candidate);
     } catch {
       // try next candidate
+    }
+  }
+
+  const recursiveBaseCandidates = [
+    process.cwd(),
+    path.join(process.cwd(), ".."),
+    path.join(process.cwd(), "../.."),
+    path.resolve("C:/dev/Biolaur"),
+    path.join(path.sep, "var", "task"),
+    path.join(path.sep, "workspace"),
+    path.join(path.sep, "mnt", "c", "dev", "Biolaur")
+  ];
+  for (const baseDir of recursiveBaseCandidates) {
+    const foundPath = await findFileRecursively(baseDir, fileName, 3);
+    if (foundPath) {
+      return await fs.readFile(foundPath);
     }
   }
 

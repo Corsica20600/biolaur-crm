@@ -332,8 +332,8 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
         }
       />
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
-        <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0 space-y-6">
           <section className="rounded-lg border border-line bg-white p-4">
             <div className="mb-4 flex flex-wrap items-center gap-2">
               <StatusBadge status={record.recordType} />
@@ -370,19 +370,19 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
                             <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
                             <input type="hidden" name="prospectClientId" value={record.id} />
                             <input type="hidden" name="status" value="a_faire" />
-                            <button className="rounded-md border border-line px-2 py-1 text-xs hover:bg-slate-50">A faire</button>
+                            <button type="submit" className="rounded-md border border-line px-2 py-1 text-xs hover:bg-slate-50">A faire</button>
                           </form>
                           <form action={setCommercialActionStatus}>
                             <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
                             <input type="hidden" name="prospectClientId" value={record.id} />
                             <input type="hidden" name="status" value="fait" />
-                            <button className="rounded-md border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">Fait</button>
+                            <button type="submit" className="rounded-md border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">Fait</button>
                           </form>
                           <form action={setCommercialActionStatus}>
                             <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
                             <input type="hidden" name="prospectClientId" value={record.id} />
                             <input type="hidden" name="status" value="annule" />
-                            <button className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50">Annule</button>
+                            <button type="submit" className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50">Annule</button>
                           </form>
                         </div>
                       </div>
@@ -455,7 +455,7 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
             <ClientForm record={record} mode="edit" saveProspectClient={saveProspectClient} />
           </section>
         </div>
-        <aside className="space-y-4">
+        <aside className="min-w-0 space-y-4">
           <section className="rounded-lg border border-line bg-white p-4">
             <h2 className="mb-3 font-semibold text-ink">Prochaines relances</h2>
             <div className="space-y-3">

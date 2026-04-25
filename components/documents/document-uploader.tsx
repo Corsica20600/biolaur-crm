@@ -56,15 +56,15 @@ export function DocumentUploader({
       className="max-w-5xl rounded-lg border border-dashed border-line bg-white p-4"
     >
       {productId ? <input type="hidden" name="productId" value={productId} /> : null}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="grid h-11 w-11 place-items-center rounded-md bg-mint text-leaf">
           <UploadCloud className="h-5 w-5" />
         </div>
-        <div className="min-w-[180px]">
+        <div>
           <p className="text-sm font-medium text-ink">Ajouter un document</p>
         </div>
         {!productId ? (
-          <select name="productId" required className="focus-ring h-10 min-w-[280px] rounded-md border border-line px-3 text-sm">
+          <select name="productId" required className="focus-ring h-10 w-full md:w-auto md:min-w-[260px] rounded-md border border-line px-3 text-sm">
             <option value="">Selectionner un produit</option>
             {products.map((product) => (
               <option key={product.id} value={product.id}>
@@ -73,14 +73,14 @@ export function DocumentUploader({
             ))}
           </select>
         ) : null}
-        <select name="type" className="focus-ring h-10 min-w-[180px] rounded-md border border-line px-3 text-sm">
+        <select name="type" className="focus-ring h-10 w-full md:w-auto md:min-w-[180px] rounded-md border border-line px-3 text-sm">
           {uploadTypeOptions.filter((option) => allowedTypes.includes(option.value)).map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>
           ))}
         </select>
-        <input name="file" type="file" accept="application/pdf" required className="text-sm" />
+        <input name="file" type="file" accept="application/pdf" required className="w-full text-sm md:w-auto" />
         <button
           type="submit"
           disabled={pending}
