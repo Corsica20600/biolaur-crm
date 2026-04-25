@@ -376,13 +376,32 @@ export async function sendCrmEmail(input: SendEmailInput) {
       };
     }
 
-    const emailLogId = await insertEmailLog(supabase, input, user.id);
-    await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
-    await insertCommercialActionDone(supabase, user.id, input.prospectClientId, input.subject, input.body);
+    try {
+      const emailLogId = await insertEmailLog(supabase, input, user.id);
+      await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
+      await insertCommercialActionDone(supabase, user.id, input.prospectClientId, input.subject, input.body);
 
-    revalidatePath("/emails");
-    revalidatePath("/actions");
-    return { ok: true, message: "Email envoye et historise.", emailLogId };
+      revalidatePath("/emails");
+      revalidatePath("/actions");
+      return { ok: true, message: "Email envoye et historise.", emailLogId };
+    } catch (historyError) {
+      const historyMessage = historyError instanceof Error ? historyError.message : "Historisation email impossible.";
+      console.error("EMAIL HISTORY ERROR", {
+        userId: user.id,
+        prospectClientId: input.prospectClientId,
+        orderId: input.orderId,
+        recipient: input.to,
+        subject: input.subject,
+        historyMessage
+      });
+
+      revalidatePath("/emails");
+      revalidatePath("/actions");
+      return {
+        ok: true,
+        message: `Email envoye. Historisation partielle: ${historyMessage}`
+      };
+    }
   } catch (error) {
     return {
       ok: false,
