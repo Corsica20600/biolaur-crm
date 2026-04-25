@@ -27,9 +27,9 @@ export function CommercialActionForm({
   }, [router, state.ok]);
 
   return (
-    <form ref={formRef} action={formAction} className="rounded-lg border border-line bg-white p-4">
+    <form ref={formRef} action={formAction} className="max-w-5xl rounded-lg border border-line bg-white p-4">
       <input type="hidden" name="prospectClientId" value={prospectClientId} />
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-3 md:grid-cols-[minmax(220px,380px)_minmax(160px,220px)]">
         <label>
           <span className="mb-1 block text-sm font-medium text-slate-700">Type d&apos;action</span>
           <select name="actionType" defaultValue="appel" className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm">
@@ -53,11 +53,11 @@ export function CommercialActionForm({
         </label>
         <label className="md:col-span-2">
           <span className="mb-1 block text-sm font-medium text-slate-700">Resume</span>
-          <input name="summary" required className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm" />
+          <input name="summary" required className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm md:max-w-3xl" />
         </label>
         <label className="md:col-span-2">
           <span className="mb-1 block text-sm font-medium text-slate-700">Details</span>
-          <textarea name="details" className="focus-ring min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm" />
+          <textarea name="details" className="focus-ring min-h-20 w-full rounded-md border border-line px-3 py-2 text-sm md:max-w-3xl" />
         </label>
         <label>
           <span className="mb-1 block text-sm font-medium text-slate-700">Date action</span>

@@ -55,6 +55,11 @@ function extractNotNullColumn(message: string) {
   return match?.[1] ?? null;
 }
 
+function isMissingOwnerUserColumn(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("owner_user_id") && (lower.includes("column") || lower.includes("could not find"));
+}
+
 function readField(row: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) {
     const value = row[key];
@@ -361,6 +366,45 @@ export async function createCommercialAction(
   revalidatePath("/actions");
 
   return { ok: true, message: "Action commerciale ajoutee." };
+}
+
+export async function setCommercialActionStatus(formData: FormData): Promise<void> {
+  const actionId = clean(formData.get("actionId"));
+  const prospectClientId = clean(formData.get("prospectClientId"));
+  const nextStatusRaw = clean(formData.get("status"));
+  const nextStatus = nextStatusRaw === "fait" || nextStatusRaw === "annule" ? nextStatusRaw : "a_faire";
+
+  if (!actionId || !prospectClientId) return;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError
+  } = await supabase.auth.getUser();
+  if (userError || !user) return;
+
+  const payload: Record<string, unknown> = {
+    action_status: nextStatus,
+    statut: nextStatus,
+    updated_at: new Date().toISOString()
+  };
+
+  const primary = await supabase
+    .from("commercial_actions")
+    .update(payload)
+    .eq("id", actionId)
+    .eq("owner_user_id", user.id);
+
+  if (primary.error && isMissingOwnerUserColumn(primary.error.message ?? "")) {
+    await supabase
+      .from("commercial_actions")
+      .update(payload)
+      .eq("id", actionId)
+      .eq("owner_id", user.id);
+  }
+
+  revalidatePath(`/crm/${prospectClientId}`);
+  revalidatePath("/actions");
 }
 
 export async function convertProspectToClient(formData: FormData): Promise<void> {

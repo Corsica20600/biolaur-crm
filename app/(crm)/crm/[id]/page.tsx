@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft, Mail, Phone, ShoppingCart } from "lucide-react";
-import { convertProspectToClient, createCommercialAction, saveProspectClient } from "@/actions/crm";
+import { convertProspectToClient, createCommercialAction, saveProspectClient, setCommercialActionStatus } from "@/actions/crm";
 import { DocumentUploader } from "@/components/documents/document-uploader";
 import { EmailComposer } from "@/components/emails/email-composer";
 import { CommercialActionForm } from "@/components/forms/commercial-action-form";
@@ -362,7 +362,31 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
                 <div key={event.id} className="rounded-md border border-line p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-medium text-ink">{event.title}</p>
-                    {event.kind === "action" ? <StatusBadge status={event.status as ActionStatus} /> : null}
+                    {event.kind === "action" ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={event.status as ActionStatus} />
+                        <div className="flex items-center gap-1">
+                          <form action={setCommercialActionStatus}>
+                            <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
+                            <input type="hidden" name="prospectClientId" value={record.id} />
+                            <input type="hidden" name="status" value="a_faire" />
+                            <button className="rounded-md border border-line px-2 py-1 text-xs hover:bg-slate-50">A faire</button>
+                          </form>
+                          <form action={setCommercialActionStatus}>
+                            <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
+                            <input type="hidden" name="prospectClientId" value={record.id} />
+                            <input type="hidden" name="status" value="fait" />
+                            <button className="rounded-md border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">Fait</button>
+                          </form>
+                          <form action={setCommercialActionStatus}>
+                            <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
+                            <input type="hidden" name="prospectClientId" value={record.id} />
+                            <input type="hidden" name="status" value="annule" />
+                            <button className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50">Annule</button>
+                          </form>
+                        </div>
+                      </div>
+                    ) : null}
                     {event.kind === "order" ? <StatusBadge status={event.status as Order["orderStatus"]} /> : null}
                     {event.kind === "email" ? (
                       <StatusBadge

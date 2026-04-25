@@ -327,6 +327,65 @@ async function insertCommercialActionDone(
   }
 }
 
+function orderStatusRank(status: string) {
+  if (status === "payee") return 4;
+  if (status === "livree") return 3;
+  if (status === "validee") return 2;
+  if (status === "envoyee") return 1;
+  if (status === "brouillon") return 0;
+  if (status === "annulee") return -1;
+  return 0;
+}
+
+async function promoteOrderStatus(
+  supabase: ReturnType<typeof createAdminClient>,
+  ownerUserId: string,
+  orderId: string | undefined,
+  minimumStatus: "envoyee" | "validee"
+) {
+  if (!orderId) return;
+
+  const { data: orderRow, error: orderError } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .eq("owner_user_id", ownerUserId)
+    .maybeSingle();
+
+  if (orderError || !orderRow) return;
+
+  const currentRaw = String(readField(orderRow as Record<string, unknown>, "order_status", "statut") ?? "brouillon");
+  if (currentRaw === "annulee") return;
+
+  const nextStatus = orderStatusRank(currentRaw) >= orderStatusRank(minimumStatus) ? currentRaw : minimumStatus;
+  if (nextStatus === currentRaw && readField(orderRow as Record<string, unknown>, "sent_at")) return;
+
+  const payload: Record<string, unknown> = {
+    order_status: nextStatus,
+    statut: nextStatus,
+    sent_at: new Date().toISOString()
+  };
+
+  const workingPayload = { ...payload };
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const { error } = await supabase
+      .from("orders")
+      .update(workingPayload)
+      .eq("id", orderId)
+      .eq("owner_user_id", ownerUserId);
+
+    if (!error) return;
+
+    const message = error.message ?? "Mise a jour statut commande impossible.";
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+      delete workingPayload[missingColumn];
+      continue;
+    }
+    return;
+  }
+}
+
 async function prepareAttachments(supabase: ReturnType<typeof createAdminClient>, input: SendEmailInput, ownerUserId: string) {
   const prepared: PreparedAttachment[] = [];
   const productDocumentIds = input.attachments.filter((item) => item.type === "product_document").map((item) => item.id);
@@ -466,9 +525,11 @@ export async function sendCrmEmail(input: SendEmailInput) {
       const emailLogId = await insertEmailLog(supabase, emailInput, user.id);
       await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
       await insertCommercialActionDone(supabase, user.id, emailInput.prospectClientId, emailInput.clientId, emailInput.subject, emailInput.body);
+      await promoteOrderStatus(supabase, user.id, emailInput.orderId, "envoyee");
 
       revalidatePath("/emails");
       revalidatePath("/actions");
+      if (emailInput.orderId) revalidatePath(`/orders/${emailInput.orderId}`);
       return { ok: true, message: "Email envoye et historise.", emailLogId };
     } catch (historyError) {
       const historyMessage = historyError instanceof Error ? historyError.message : "Historisation email impossible.";
