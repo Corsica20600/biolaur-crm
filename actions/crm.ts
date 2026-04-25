@@ -50,6 +50,158 @@ function extractForeignKeyColumn(message: string) {
   return null;
 }
 
+function extractNotNullColumn(message: string) {
+  const match = message.match(/null value in column "([^"]+)"/i);
+  return match?.[1] ?? null;
+}
+
+function readField(row: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== null && value !== undefined) return value;
+  }
+  return undefined;
+}
+
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+async function resolveLegacyClientId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerUserId: string,
+  prospectClientId: string
+) {
+  const { data: orderRows, error: ordersError } = await supabase
+    .from("orders")
+    .select("client_id,prospect_client_id,created_at")
+    .eq("owner_user_id", ownerUserId)
+    .eq("prospect_client_id", prospectClientId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+
+  if (!ordersError) {
+    const withClient = (orderRows ?? []).find((row) => String((row as Record<string, unknown>).client_id ?? "").length > 0);
+    if (withClient) return String((withClient as Record<string, unknown>).client_id ?? "");
+  }
+
+  const { data: prospectRow, error: prospectError } = await supabase
+    .from("prospects_clients")
+    .select("*")
+    .eq("owner_user_id", ownerUserId)
+    .eq("id", prospectClientId)
+    .maybeSingle();
+
+  if (prospectError || !prospectRow) return null;
+
+  const prospect = prospectRow as Record<string, unknown>;
+  const prospectEmail = normalizeText(readField(prospect, "email", "contact_email", "mail"));
+  const prospectNames = [
+    normalizeText(readField(prospect, "trade_name")),
+    normalizeText(readField(prospect, "company_name")),
+    normalizeText(readField(prospect, "name"))
+  ].filter(Boolean);
+
+  const { data: clients, error: clientsError } = await supabase.from("clients").select("*").eq("owner_user_id", ownerUserId).limit(500);
+  if (clientsError) return null;
+
+  const rows = (clients ?? []) as Record<string, unknown>[];
+  const direct = rows.find((row) => String(readField(row, "id") ?? "") === prospectClientId);
+  if (direct) return String(readField(direct, "id") ?? "");
+
+  const linked = rows.find((row) => {
+    const linkedId = String(readField(row, "prospect_client_id", "prospect_id", "prospectId", "crm_prospect_id") ?? "");
+    return linkedId && linkedId === prospectClientId;
+  });
+  if (linked) return String(readField(linked, "id") ?? "");
+
+  if (prospectEmail) {
+    const byEmail = rows.find((row) => normalizeText(readField(row, "email", "contact_email", "mail")) === prospectEmail);
+    if (byEmail) return String(readField(byEmail, "id") ?? "");
+  }
+
+  if (prospectNames.length) {
+    const byName = rows.find((row) => {
+      const names = [
+        normalizeText(readField(row, "trade_name")),
+        normalizeText(readField(row, "company_name")),
+        normalizeText(readField(row, "raison_sociale")),
+        normalizeText(readField(row, "nom_societe")),
+        normalizeText(readField(row, "societe")),
+        normalizeText(readField(row, "name"))
+      ].filter(Boolean);
+      return names.some((name) => prospectNames.includes(name));
+    });
+    if (byName) return String(readField(byName, "id") ?? "");
+  }
+
+  const displayName =
+    String(readField(prospect, "trade_name") ?? "").trim() ||
+    String(readField(prospect, "company_name") ?? "").trim() ||
+    "Client";
+  const email = String(readField(prospect, "email", "contact_email", "mail") ?? "").trim() || null;
+
+  const insertPayload: Record<string, unknown> = {
+    owner_user_id: ownerUserId,
+    owner_id: ownerUserId,
+    prospect_client_id: prospectClientId,
+    type_fiche: "client",
+    record_type: "client",
+    company_name: displayName,
+    trade_name: displayName,
+    raison_sociale: displayName,
+    nom_societe: displayName,
+    societe: displayName,
+    name: displayName,
+    email
+  };
+
+  const workingPayload = { ...insertPayload };
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const { data: inserted, error: insertError } = await supabase.from("clients").insert(workingPayload).select("*").single();
+    if (!insertError && inserted) {
+      const insertedId = String(readField(inserted as Record<string, unknown>, "id") ?? "");
+      return insertedId || null;
+    }
+
+    const message = insertError?.message ?? "Insertion client legacy impossible.";
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+      delete workingPayload[missingColumn];
+      continue;
+    }
+
+    const notNullColumn = extractNotNullColumn(message);
+    if (notNullColumn) {
+      if (notNullColumn === "owner_user_id") {
+        workingPayload.owner_user_id = ownerUserId;
+        continue;
+      }
+      if (notNullColumn === "owner_id") {
+        workingPayload.owner_id = ownerUserId;
+        continue;
+      }
+      if (notNullColumn === "type_fiche") {
+        workingPayload.type_fiche = "client";
+        continue;
+      }
+      if (["company_name", "trade_name", "raison_sociale", "nom_societe", "societe", "name"].includes(notNullColumn)) {
+        workingPayload[notNullColumn] = displayName;
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  return null;
+}
+
 export async function saveProspectClient(
   _previousState: SaveProspectClientState,
   formData: FormData
@@ -145,12 +297,13 @@ export async function createCommercialAction(
   const actionType = clean(formData.get("actionType")) || "appel";
   const normalizedActionType = actionType === "reassort" || actionType === "prospection" ? "relance" : actionType;
   const actionStatus = clean(formData.get("actionStatus")) || "a_faire";
+  const legacyClientId = await resolveLegacyClientId(supabase, user.id, prospectClientId);
 
   const payload: CommercialActionInsertPayload = {
     owner_user_id: user.id,
     owner_id: user.id,
     prospect_client_id: prospectClientId,
-    client_id: null,
+    client_id: legacyClientId,
     action_type: normalizedActionType,
     type: actionType,
     action_status: actionStatus,
@@ -192,7 +345,16 @@ export async function createCommercialAction(
   }
 
   if (!inserted) {
-    return { ok: false, message: insertError || "Insertion commercial_actions impossible." };
+    const isClientConstraint =
+      insertError.toLowerCase().includes("commercial_actions") &&
+      insertError.toLowerCase().includes("client_id") &&
+      (insertError.toLowerCase().includes("not-null") || insertError.toLowerCase().includes("foreign key"));
+    return {
+      ok: false,
+      message: isClientConstraint
+        ? "Impossible d'ajouter l'action: client legacy non lie a cette fiche. Liaison client requise."
+        : insertError || "Insertion commercial_actions impossible."
+    };
   }
 
   revalidatePath(`/crm/${prospectClientId}`);

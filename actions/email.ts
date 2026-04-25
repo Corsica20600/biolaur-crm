@@ -145,8 +145,23 @@ async function blobToBase64(blob: Blob) {
 async function resolveLegacyClientId(
   supabase: ReturnType<typeof createAdminClient>,
   ownerUserId: string,
-  prospectRow: Record<string, unknown> | null
+  prospectRow: Record<string, unknown> | null,
+  orderId?: string
 ) {
+  if (orderId) {
+    const { data: orderRow, error: orderError } = await supabase
+      .from("orders")
+      .select("id,owner_user_id,client_id")
+      .eq("id", orderId)
+      .eq("owner_user_id", ownerUserId)
+      .maybeSingle();
+
+    if (!orderError) {
+      const orderClientId = String(readField((orderRow as Record<string, unknown> | null) ?? {}, "client_id") ?? "");
+      if (orderClientId) return orderClientId;
+    }
+  }
+
   if (!prospectRow) return null;
 
   const prospectId = String(readField(prospectRow, "id") ?? "");
@@ -268,6 +283,7 @@ async function insertCommercialActionDone(
   supabase: ReturnType<typeof createAdminClient>,
   userId: string,
   prospectClientId: string | undefined,
+  legacyClientId: string | undefined,
   subject: string,
   body: string
 ) {
@@ -277,6 +293,7 @@ async function insertCommercialActionDone(
     owner_user_id: userId,
     owner_id: userId,
     prospect_client_id: prospectClientId,
+    client_id: legacyClientId ?? null,
     action_type: "email",
     type: "email",
     action_status: "fait",
@@ -403,7 +420,7 @@ export async function sendCrmEmail(input: SendEmailInput) {
       }
     }
 
-    const legacyClientId = await resolveLegacyClientId(supabase, user.id, prospectRow);
+    const legacyClientId = await resolveLegacyClientId(supabase, user.id, prospectRow, input.orderId);
     const emailInput: SendEmailInput = {
       ...input,
       clientId: legacyClientId ?? undefined
@@ -448,7 +465,7 @@ export async function sendCrmEmail(input: SendEmailInput) {
     try {
       const emailLogId = await insertEmailLog(supabase, emailInput, user.id);
       await insertEmailAttachments(supabase, emailLogId, user.id, attachments);
-      await insertCommercialActionDone(supabase, user.id, emailInput.prospectClientId, emailInput.subject, emailInput.body);
+      await insertCommercialActionDone(supabase, user.id, emailInput.prospectClientId, emailInput.clientId, emailInput.subject, emailInput.body);
 
       revalidatePath("/emails");
       revalidatePath("/actions");
