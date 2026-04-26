@@ -61,8 +61,30 @@ const staticAttachmentOptions: StaticAttachmentOption[] = [
   { key: "pricing_sheet", label: "Tarif BIOLAUR SP 2026 - V2 CORSE" }
 ];
 
+const DEFAULT_BODIES_BY_CODE: Record<string, string> = {
+  send_technical_sheet:
+    "Bonjour,\n\nSuite a notre echange, vous trouverez en pieces jointes les documents demandes.\n\nJe reste a votre disposition pour toute information complementaire, un devis personnalise ou un accompagnement sur vos besoins.\n\nCordialement,\nErwan Longin\nBiolaur Distribution",
+  send_order:
+    "Bonjour,\n\nVeuillez trouver ci-joint votre bon de commande.\n\nJe reste a votre disposition pour toute precision ou modification eventuelle.\n\nCordialement,\nErwan Longin\nBiolaur Distribution"
+};
+
+const LEGACY_TEMPLATE_BODIES = [
+  "Bonjour,\n\nVeuillez trouver ci-joint les fiches techniques demandées.\n\nCordialement",
+  "Bonjour,\n\nVeuillez trouver ci-joint votre bon de commande.\n\nCordialement",
+  "Bonjour,\n\nVeuillez trouver ci-joint les fiches techniques demandees.\n\nCordialement",
+  "Bonjour,\n\nVeuillez trouver ci-joint votre bon de commande.\n\nCordialement"
+];
+
 function normalizeEmailBody(body: string) {
   return body.replace(/\\n/g, "\n");
+}
+
+function resolveTemplateBody(template: EmailTemplateOption | undefined) {
+  if (!template) return DEFAULT_BODIES_BY_CODE.send_technical_sheet;
+  const normalizedBody = normalizeEmailBody(template.bodyTemplate || "");
+  if (!normalizedBody.trim()) return DEFAULT_BODIES_BY_CODE[template.code] ?? DEFAULT_BODIES_BY_CODE.send_technical_sheet;
+  if (LEGACY_TEMPLATE_BODIES.includes(normalizedBody)) return DEFAULT_BODIES_BY_CODE[template.code] ?? normalizedBody;
+  return normalizedBody;
 }
 
 export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?: string; orderId?: string }) {
@@ -130,7 +152,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
     if (!selectedTemplate) return;
     setSelectedTemplateId((current) => current || selectedTemplate.id);
     setSubject(selectedTemplate.subjectTemplate);
-    setBody(normalizeEmailBody(selectedTemplate.bodyTemplate));
+    setBody(resolveTemplateBody(selectedTemplate));
   }, [selectedTemplate]);
 
   useEffect(() => {
@@ -151,7 +173,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
     setSelectedTemplateId(templateId);
     if (template) {
       setSubject(template.subjectTemplate);
-      setBody(normalizeEmailBody(template.bodyTemplate));
+      setBody(resolveTemplateBody(template));
     }
   }
 
@@ -198,7 +220,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
   }
 
   return (
-    <form onSubmit={handleSubmit} className="max-w-4xl space-y-4 rounded-lg border border-line bg-white p-4">
+    <form onSubmit={handleSubmit} className="w-full space-y-6 rounded-lg border border-line bg-white p-5 lg:p-6">
       <input type="hidden" name="prospectClientId" value={selectedClientId} />
       <input type="hidden" name="orderId" value={orderId ?? ""} />
       <div className="grid gap-4 md:grid-cols-3">
@@ -227,58 +249,66 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
           </select>
         </label>
       </div>
-      <label>
-        <span className="mb-1 block text-sm font-medium text-slate-700">Objet</span>
-        <input value={subject} onChange={(event) => setSubject(event.target.value)} className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm" />
-      </label>
-      <label>
-        <span className="mb-1 block text-sm font-medium text-slate-700">Message</span>
-        <textarea value={body} onChange={(event) => setBody(event.target.value)} className="focus-ring min-h-40 w-full rounded-md border border-line px-3 py-2 text-sm" />
-      </label>
-      <div>
-        <p className="mb-2 text-sm font-medium text-slate-700">Pieces jointes historisees</p>
-        <div className="grid gap-2 md:grid-cols-2">
-          {selectedOrder ? (
-            <label className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm">
-              <input
-                type="checkbox"
-                checked={selectedAttachments.includes(`order_pdf:${selectedOrder.id}`)}
-                onChange={(event) => toggleAttachment(`order_pdf:${selectedOrder.id}`, event.target.checked)}
-              />
-              <span>{selectedOrder.orderNumber}.pdf</span>
-            </label>
-          ) : null}
-          {technicalSheets.map((doc) => (
-            <label key={doc.id} className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm">
-              <input
-                type="checkbox"
-                checked={selectedAttachments.includes(`product_document:${doc.id}`)}
-                onChange={(event) => toggleAttachment(`product_document:${doc.id}`, event.target.checked)}
-              />
-              <span>{doc.productReference ? `${doc.productReference} - ` : ""}{doc.title}</span>
-            </label>
-          ))}
-          {staticAttachmentOptions.map((attachment) => (
-            <label key={attachment.key} className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm">
-              <input
-                type="checkbox"
-                checked={selectedAttachments.includes(`${attachment.key}:${attachment.key}`)}
-                onChange={(event) => toggleAttachment(`${attachment.key}:${attachment.key}`, event.target.checked)}
-              />
-              <span>{attachment.label}</span>
-            </label>
-          ))}
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <label>
+            <span className="mb-1 block text-sm font-medium text-slate-700">Objet</span>
+            <input value={subject} onChange={(event) => setSubject(event.target.value)} className="focus-ring h-10 w-full rounded-md border border-line px-3 text-sm" />
+          </label>
+          <label>
+            <span className="mb-1 block text-sm font-medium text-slate-700">Message</span>
+            <textarea value={body} onChange={(event) => setBody(event.target.value)} className="focus-ring min-h-[360px] w-full rounded-md border border-line px-4 py-3 text-sm leading-6" />
+          </label>
+        </div>
+        <aside className="rounded-lg border border-line bg-slate-50/60 p-4">
+          <p className="mb-3 text-sm font-semibold text-slate-800">Pieces jointes historisees</p>
+          <div className="space-y-2">
+            {selectedOrder ? (
+              <label className="flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selectedAttachments.includes(`order_pdf:${selectedOrder.id}`)}
+                  onChange={(event) => toggleAttachment(`order_pdf:${selectedOrder.id}`, event.target.checked)}
+                />
+                <span>{selectedOrder.orderNumber}.pdf</span>
+              </label>
+            ) : null}
+            {technicalSheets.map((doc) => (
+              <label key={doc.id} className="flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selectedAttachments.includes(`product_document:${doc.id}`)}
+                  onChange={(event) => toggleAttachment(`product_document:${doc.id}`, event.target.checked)}
+                />
+                <span>{doc.productReference ? `${doc.productReference} - ` : ""}{doc.title}</span>
+              </label>
+            ))}
+            {staticAttachmentOptions.map((attachment) => (
+              <label key={attachment.key} className="flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={selectedAttachments.includes(`${attachment.key}:${attachment.key}`)}
+                  onChange={(event) => toggleAttachment(`${attachment.key}:${attachment.key}`, event.target.checked)}
+                />
+                <span>{attachment.label}</span>
+              </label>
+            ))}
+          </div>
+        </aside>
+      </div>
+      <div className="space-y-3">
+        {message ? (
+          <p className={message.type === "success" ? "rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700" : "rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700"}>
+            {message.text}
+          </p>
+        ) : null}
+        <div>
+          <button disabled={isPending} type="submit" className="focus-ring inline-flex items-center gap-2 rounded-md bg-leaf px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">
+            <Send className="h-4 w-4" />
+            {isPending ? "Envoi..." : "Envoyer et historiser"}
+          </button>
         </div>
       </div>
-      {message ? (
-        <p className={message.type === "success" ? "rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700" : "rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700"}>
-          {message.text}
-        </p>
-      ) : null}
-      <button disabled={isPending} type="submit" className="focus-ring inline-flex items-center gap-2 rounded-md bg-leaf px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60">
-        <Send className="h-4 w-4" />
-        {isPending ? "Envoi..." : "Envoyer et historiser"}
-      </button>
     </form>
   );
 }
