@@ -29,16 +29,6 @@ function readField(row: Record<string, unknown>, ...keys: string[]) {
   return undefined;
 }
 
-function cleanAutoKey(text?: string) {
-  if (!text) return "";
-  return text
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("AUTO_KEY:"))
-    .join("\n")
-    .replace(/AUTO_KEY:[^\s\n]+/g, "")
-    .trim();
-}
-
 function mapProspectClient(row: Record<string, unknown>): ProspectClient {
   return {
     id: String(row.id ?? ""),
@@ -304,11 +294,6 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
     }))
   ].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
-  const upcomingActions = actions
-    .filter((action) => action.nextActionDate)
-    .sort((a, b) => String(a.nextActionDate).localeCompare(String(b.nextActionDate)))
-    .slice(0, 5);
-
   return (
     <>
       <Link href="/crm" className="mb-4 inline-flex items-center gap-2 text-sm text-slate-500 hover:text-leaf">
@@ -343,7 +328,7 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
         }
       />
 
-      <div className="grid gap-6 2xl:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="space-y-6">
         <div className="min-w-0 space-y-6">
           <section className="rounded-lg border border-line bg-white p-4">
             <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -441,23 +426,6 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
             <ClientForm record={record} mode="edit" saveProspectClient={saveProspectClient} />
           </section>
         </div>
-        <aside className="min-w-0 space-y-4">
-          <section className="rounded-lg border border-line bg-white p-4">
-            <h2 className="mb-3 font-semibold text-ink">Prochaines relances</h2>
-            <div className="space-y-3">
-              {upcomingActions.map((action) => (
-                <div key={action.id} className="rounded-md border border-line p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-ink">{cleanAutoKey(action.summary) || "Action commerciale"}</p>
-                    <StatusBadge status={action.actionStatus} />
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">{formatDate(action.nextActionDate)}</p>
-                </div>
-              ))}
-              {!upcomingActions.length ? <p className="text-sm text-slate-500">Aucune relance planifiee.</p> : null}
-            </div>
-          </section>
-        </aside>
       </div>
     </>
   );

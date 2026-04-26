@@ -33,6 +33,7 @@ export function CommercialActionsHistory({
   ) => Promise<UpdateCommercialActionStatusState>;
 }) {
   const [rows, setRows] = useState<ActionRow[]>(actions);
+  const [statusFilter, setStatusFilter] = useState<"all" | "a_faire" | "fait" | "annule">("all");
   const [feedback, setFeedback] = useState<{ ok: boolean; message: string } | null>(null);
   const [pendingActionId, setPendingActionId] = useState<string>("");
   const [state, formAction, pending] = useActionState(updateCommercialActionStatus, initialStatusState);
@@ -65,6 +66,8 @@ export function CommercialActionsHistory({
     }
   }, [pending]);
 
+  const visibleRows = rows.filter((action) => (statusFilter === "all" ? true : action.actionStatus === statusFilter));
+
   return (
     <section className="rounded-lg border border-line bg-white p-4">
       <h2 className="mb-3 font-semibold text-ink">Actions commerciales</h2>
@@ -76,8 +79,38 @@ export function CommercialActionsHistory({
       <div className="mb-4">
         <p className="text-sm text-slate-500">Traitez les relances en cours et mettez a jour leur statut.</p>
       </div>
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setStatusFilter("all")}
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${statusFilter === "all" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-line text-slate-600 hover:bg-slate-50"}`}
+        >
+          Toutes
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter("a_faire")}
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${statusFilter === "a_faire" ? "border-amber-200 bg-amber-50 text-amber-700" : "border-line text-slate-600 hover:bg-slate-50"}`}
+        >
+          A faire
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter("fait")}
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${statusFilter === "fait" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-line text-slate-600 hover:bg-slate-50"}`}
+        >
+          Fait
+        </button>
+        <button
+          type="button"
+          onClick={() => setStatusFilter("annule")}
+          className={`rounded-full border px-3 py-1 text-xs font-medium ${statusFilter === "annule" ? "border-rose-200 bg-rose-50 text-rose-700" : "border-line text-slate-600 hover:bg-slate-50"}`}
+        >
+          Annulees
+        </button>
+      </div>
       <div className="space-y-3">
-        {rows.map((action) => {
+        {visibleRows.map((action) => {
           const summary = cleanAutoKey(action.summary) || "Action commerciale";
           const details = cleanAutoKey(action.details);
           const isDisabled = pending && pendingActionId === action.id;
@@ -89,6 +122,11 @@ export function CommercialActionsHistory({
                 <div className="flex items-center gap-2">
                   <span className="rounded-full border border-line px-2.5 py-1 text-xs font-medium text-slate-600">{action.actionType}</span>
                   <StatusBadge status={action.actionStatus} />
+                  {action.actionStatus === "a_faire" && action.nextActionDate ? (
+                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      Prochaine relance
+                    </span>
+                  ) : null}
                 </div>
               </div>
               {details ? <p className="mt-2 text-sm text-slate-600">{details}</p> : null}
@@ -133,7 +171,7 @@ export function CommercialActionsHistory({
             </article>
           );
         })}
-        {!rows.length ? <p className="text-sm text-slate-500">Aucune action commerciale pour cette fiche.</p> : null}
+        {!visibleRows.length ? <p className="text-sm text-slate-500">Aucune action pour ce filtre.</p> : null}
       </div>
     </section>
   );
