@@ -82,7 +82,7 @@ export function DataTable<T>({
             <thead className="bg-gray-50/80 text-left text-xs font-bold uppercase tracking-wide text-gray-500">
               <tr>
                 {columns.map((column) => (
-                  <th key={String(column.key)} className="whitespace-nowrap px-5 py-4">
+                  <th key={String(column.key)} className="px-5 py-4">
                     {column.sortable ? (
                       <button
                         type="button"
@@ -103,7 +103,7 @@ export function DataTable<T>({
               {visibleRows.map((row, index) => (
                 <tr key={index} className="transition hover:bg-emerald-50/30">
                   {columns.map((column) => (
-                    <td key={String(column.key)} className="whitespace-nowrap px-5 py-4 align-middle text-gray-700">
+                    <td key={String(column.key)} className="px-5 py-4 align-middle text-gray-700">
                       {column.render ? column.render(row) : String((row as Record<string, unknown>)[String(column.key)] ?? "")}
                     </td>
                   ))}

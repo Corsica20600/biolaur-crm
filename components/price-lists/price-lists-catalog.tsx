@@ -45,12 +45,12 @@ export function PriceListsCatalog({
               return (
                 <Link href={`/products/${row.productId}`} className="font-medium text-ink hover:text-leaf">
                   {product?.reference}
-                  <span className="block text-xs font-normal text-slate-500">{product?.name}</span>
+                  <span className="mt-0.5 block max-w-xs text-xs font-normal text-slate-500">{product?.name}</span>
                 </Link>
               );
             }
           },
-          { key: "conditioning", header: "Conditionnement", sortable: true },
+          { key: "conditioning", header: "Cond.", sortable: true },
           { key: "unitPriceHt", header: "Prix HT", sortable: true, accessor: (row) => row.unitPriceHt, render: (row) => formatCurrency(row.unitPriceHt) },
           { key: "discountPercent", header: "Remise", sortable: true, render: (row) => `${row.discountPercent}%` },
           { key: "isAvailable", header: "Dispo", sortable: true, render: (row) => (row.isAvailable ? "Disponible" : "Indisponible") },
@@ -61,7 +61,7 @@ export function PriceListsCatalog({
             render: () => (
               <Link href="/orders/new" className="focus-ring inline-flex items-center gap-1 rounded-md border border-line px-3 py-1.5 text-xs font-medium text-leaf">
                 <Plus className="h-3.5 w-3.5" />
-                Selectionner
+                Ajouter
               </Link>
             )
           }
