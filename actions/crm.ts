@@ -15,6 +15,13 @@ export type CreateCommercialActionState = {
   message: string;
 };
 
+export type UpdateCommercialActionStatusState = {
+  ok: boolean;
+  message: string;
+  actionId?: string;
+  status?: "a_faire" | "fait" | "annule";
+};
+
 type CommercialActionInsertPayload = {
   owner_user_id: string;
   owner_id: string;
@@ -60,6 +67,13 @@ function extractNotNullColumn(message: string) {
 function isMissingOwnerUserColumn(message: string) {
   const lower = message.toLowerCase();
   return lower.includes("owner_user_id") && (lower.includes("column") || lower.includes("could not find"));
+}
+
+function resolveAllowedActionStatus(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "fait") return "fait";
+  if (normalized === "annule" || normalized === "annulé") return "annule";
+  return "a_faire";
 }
 
 function readField(row: Record<string, unknown>, ...keys: string[]) {
@@ -302,8 +316,11 @@ export async function createCommercialAction(
   const actionDate = clean(formData.get("actionDate"));
   const nextActionDate = clean(formData.get("nextActionDate"));
   const normalizedActionType = mapCommercialActionType(clean(formData.get("actionType")), "relance");
-  const actionStatus = clean(formData.get("actionStatus")) || "a_faire";
+  const actionStatus = resolveAllowedActionStatus(clean(formData.get("actionStatus")) || "a_faire");
   const legacyClientId = await resolveLegacyClientId(supabase, user.id, prospectClientId);
+  if (!legacyClientId) {
+    return { ok: false, message: "Client legacy non lie a cette fiche. Action impossible." };
+  }
 
   const payload: CommercialActionInsertPayload = {
     owner_user_id: user.id,
@@ -371,45 +388,92 @@ export async function createCommercialAction(
 }
 
 export async function setCommercialActionStatus(formData: FormData): Promise<void> {
+  await updateCommercialActionStatus({ ok: false, message: "" }, formData);
+}
+
+export async function updateCommercialActionStatus(
+  _previousState: UpdateCommercialActionStatusState,
+  formData: FormData
+): Promise<UpdateCommercialActionStatusState> {
   const actionId = clean(formData.get("actionId"));
   const prospectClientId = clean(formData.get("prospectClientId"));
-  const nextStatusRaw = clean(formData.get("status"));
-  const nextStatus = nextStatusRaw === "fait" || nextStatusRaw === "annule" ? nextStatusRaw : "a_faire";
+  const nextStatus = resolveAllowedActionStatus(clean(formData.get("status")));
 
-  if (!actionId || !prospectClientId) return;
+  if (!actionId || !prospectClientId) {
+    return { ok: false, message: "Action introuvable." };
+  }
 
   const supabase = await createClient();
   const {
     data: { user },
     error: userError
   } = await supabase.auth.getUser();
-  if (userError || !user) return;
+  if (userError || !user) {
+    return { ok: false, message: "Authentification requise." };
+  }
 
-  const payload: Record<string, unknown> = {
+  const updatePayload: Record<string, unknown> = {
     action_status: nextStatus,
     statut: nextStatus,
     updated_at: new Date().toISOString()
   };
+  const workingPayload = { ...updatePayload };
 
-  const primary = await supabase
-    .from("commercial_actions")
-    .update(payload)
-    .eq("id", actionId)
-    .eq("owner_user_id", user.id)
-    .select("id");
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const primary = await supabase
+      .from("commercial_actions")
+      .update(workingPayload)
+      .eq("id", actionId)
+      .eq("owner_user_id", user.id)
+      .select("id");
 
-  const primaryUpdatedCount = Array.isArray(primary.data) ? primary.data.length : 0;
-  const shouldFallbackToOwnerId =
-    !primary.error && primaryUpdatedCount === 0
-      ? true
-      : Boolean(primary.error && isMissingOwnerUserColumn(primary.error.message ?? ""));
+    const primaryUpdatedCount = Array.isArray(primary.data) ? primary.data.length : 0;
+    const shouldFallbackToOwnerId =
+      !primary.error && primaryUpdatedCount === 0
+        ? true
+        : Boolean(primary.error && isMissingOwnerUserColumn(primary.error.message ?? ""));
 
-  if (shouldFallbackToOwnerId) {
-    await supabase.from("commercial_actions").update(payload).eq("id", actionId).eq("owner_id", user.id);
+    if (!primary.error && primaryUpdatedCount > 0) {
+      revalidatePath(`/crm/${prospectClientId}`);
+      revalidatePath("/actions");
+      return { ok: true, message: "Action mise a jour", actionId, status: nextStatus };
+    }
+
+    if (shouldFallbackToOwnerId) {
+      const fallback = await supabase
+        .from("commercial_actions")
+        .update(workingPayload)
+        .eq("id", actionId)
+        .eq("owner_id", user.id)
+        .select("id");
+      if (!fallback.error && Array.isArray(fallback.data) && fallback.data.length > 0) {
+        revalidatePath(`/crm/${prospectClientId}`);
+        revalidatePath("/actions");
+        return { ok: true, message: "Action mise a jour", actionId, status: nextStatus };
+      }
+      if (fallback.error) {
+        const missingColumn = extractMissingColumn(fallback.error.message ?? "");
+        if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+          delete workingPayload[missingColumn];
+          continue;
+        }
+        return { ok: false, message: "Impossible de modifier l'action" };
+      }
+    }
+
+    if (primary.error) {
+      const missingColumn = extractMissingColumn(primary.error.message ?? "");
+      if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
+        delete workingPayload[missingColumn];
+        continue;
+      }
+      return { ok: false, message: "Impossible de modifier l'action" };
+    }
+
+    return { ok: false, message: "Impossible de modifier l'action" };
   }
 
-  revalidatePath(`/crm/${prospectClientId}`);
-  revalidatePath("/actions");
+  return { ok: false, message: "Impossible de modifier l'action" };
 }
 
 export async function convertProspectToClient(formData: FormData): Promise<void> {

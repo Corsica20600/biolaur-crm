@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft, Mail, Phone, ShoppingCart } from "lucide-react";
-import { convertProspectToClient, createCommercialAction, saveProspectClient, setCommercialActionStatus } from "@/actions/crm";
+import { convertProspectToClient, createCommercialAction, saveProspectClient, updateCommercialActionStatus } from "@/actions/crm";
+import { CommercialActionsHistory } from "@/components/crm/commercial-actions-history";
 import { DocumentUploader } from "@/components/documents/document-uploader";
 import { EmailComposer } from "@/components/emails/email-composer";
 import { CommercialActionForm } from "@/components/forms/commercial-action-form";
@@ -10,15 +11,15 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { createClient } from "@/supabase/server";
-import type { ActionStatus, CommercialAction, CommercialActionRow, EmailLog, Order, OrderItem, ProspectClient } from "@/types/crm";
+import type { CommercialAction, CommercialActionRow, EmailLog, Order, OrderItem, ProspectClient } from "@/types/crm";
 
 type HistoryEvent = {
   id: string;
-  kind: "action" | "email" | "order";
+  kind: "email" | "order";
   date: string;
   title: string;
   details?: string;
-  status?: ActionStatus | Order["orderStatus"] | EmailLog["sendStatus"];
+  status?: Order["orderStatus"] | EmailLog["sendStatus"];
 };
 
 function readField(row: Record<string, unknown>, ...keys: string[]) {
@@ -26,6 +27,16 @@ function readField(row: Record<string, unknown>, ...keys: string[]) {
     if (row[key] !== undefined && row[key] !== null) return row[key];
   }
   return undefined;
+}
+
+function cleanAutoKey(text?: string) {
+  if (!text) return "";
+  return text
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("AUTO_KEY:"))
+    .join("\n")
+    .replace(/AUTO_KEY:[^\s\n]+/g, "")
+    .trim();
 }
 
 function mapProspectClient(row: Record<string, unknown>): ProspectClient {
@@ -72,8 +83,8 @@ function mapProspectClient(row: Record<string, unknown>): ProspectClient {
 }
 
 function mapAction(row: CommercialActionRow): CommercialAction {
-  const actionType = row.action_type ?? row.type;
-  const actionStatus = row.statut;
+  const actionType = row.action_type ?? row.type_action ?? row.type;
+  const actionStatus = row.action_status ?? row.statut;
 
   return {
     id: String(row.id),
@@ -88,11 +99,19 @@ function mapAction(row: CommercialActionRow): CommercialAction {
         ? actionType
         : "appel",
     actionStatus: actionStatus === "fait" || actionStatus === "annule" ? actionStatus : "a_faire",
-    actionDate: String(row.date_action ?? row.created_at ?? ""),
-    summary: String(row.compte_rendu ?? ""),
-    details: row.prochaine_action ? String(row.prochaine_action) : undefined,
+    actionDate: String(row.action_date ?? row.date_action ?? row.created_at ?? ""),
+    summary: String(row.summary ?? row.compte_rendu ?? row.resume ?? ""),
+    details: String(row.details ?? row.prochaine_action ?? "").trim() || undefined,
     nextActionType: undefined,
-    nextActionDate: row.date_prochaine_action ? String(row.date_prochaine_action) : undefined,
+    nextActionDate: row.next_action_date
+      ? String(row.next_action_date)
+      : row.date_prochaine_action
+        ? String(row.date_prochaine_action)
+        : row.prochaine_relance
+          ? String(row.prochaine_relance)
+          : row.prochaine
+            ? String(row.prochaine)
+            : undefined,
     createdAt: String(row.created_at ?? ""),
     updatedAt: String(row.updated_at ?? "")
   };
@@ -267,14 +286,6 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
     .sort((a, b) => String(b.orderDate).localeCompare(String(a.orderDate)));
 
   const history: HistoryEvent[] = [
-    ...actions.map((action) => ({
-      id: `action-${action.id}`,
-      kind: "action" as const,
-      date: action.actionDate,
-      title: action.summary || "Action commerciale",
-      details: action.details,
-      status: action.actionStatus
-    })),
     ...emails.map((email) => ({
       id: `email-${email.id}`,
       kind: "email" as const,
@@ -357,44 +368,19 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
             <div className="mb-4">
               <CommercialActionForm prospectClientId={record.id} createCommercialAction={createCommercialAction} />
             </div>
-            <div className="space-y-3">
+            <CommercialActionsHistory
+              actions={actions}
+              prospectClientId={record.id}
+              updateCommercialActionStatus={updateCommercialActionStatus}
+            />
+            <div className="mt-6 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-700">Autres evenements</h3>
               {history.map((event) => (
                 <div key={event.id} className="rounded-md border border-line p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-sm font-medium text-ink">{event.title}</p>
-                    {event.kind === "action" ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <StatusBadge status={event.status as ActionStatus} />
-                        <div className="flex items-center gap-1">
-                          <form action={setCommercialActionStatus}>
-                            <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
-                            <input type="hidden" name="prospectClientId" value={record.id} />
-                            <input type="hidden" name="status" value="a_faire" />
-                            <button type="submit" className="rounded-md border border-line px-2 py-1 text-xs hover:bg-slate-50">A faire</button>
-                          </form>
-                          <form action={setCommercialActionStatus}>
-                            <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
-                            <input type="hidden" name="prospectClientId" value={record.id} />
-                            <input type="hidden" name="status" value="fait" />
-                            <button type="submit" className="rounded-md border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">Fait</button>
-                          </form>
-                          <form action={setCommercialActionStatus}>
-                            <input type="hidden" name="actionId" value={event.id.replace("action-", "")} />
-                            <input type="hidden" name="prospectClientId" value={record.id} />
-                            <input type="hidden" name="status" value="annule" />
-                            <button type="submit" className="rounded-md border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50">Annule</button>
-                          </form>
-                        </div>
-                      </div>
-                    ) : null}
                     {event.kind === "order" ? <StatusBadge status={event.status as Order["orderStatus"]} /> : null}
-                    {event.kind === "email" ? (
-                      <StatusBadge
-                        status={
-                          event.status === "sent" ? "fait" : event.status === "failed" ? "annule" : "a_faire"
-                        }
-                      />
-                    ) : null}
+                    {event.kind === "email" ? <StatusBadge status={event.status === "sent" ? "fait" : "annule"} /> : null}
                   </div>
                   {event.details ? <p className="mt-1 text-sm text-slate-600">{event.details}</p> : null}
                   <p className="mt-1 text-xs text-slate-500">{formatDate(event.date)}</p>
@@ -462,7 +448,7 @@ export default async function CrmDetailPage({ params }: { params: Promise<{ id: 
               {upcomingActions.map((action) => (
                 <div key={action.id} className="rounded-md border border-line p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-ink">{action.summary}</p>
+                    <p className="text-sm font-medium text-ink">{cleanAutoKey(action.summary) || "Action commerciale"}</p>
                     <StatusBadge status={action.actionStatus} />
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{formatDate(action.nextActionDate)}</p>

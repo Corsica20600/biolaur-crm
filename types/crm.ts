@@ -205,12 +205,21 @@ export interface CommercialActionRow {
   owner_user_id: string;
   prospect_client_id?: string | null;
   action_type?: string | null;
+  type_action?: string | null;
   type?: string | null;
+  action_status?: string | null;
   statut?: string | null;
+  action_date?: string | null;
   date_action?: string | null;
+  summary?: string | null;
   compte_rendu?: string | null;
+  details?: string | null;
+  resume?: string | null;
   prochaine_action?: string | null;
+  next_action_date?: string | null;
   date_prochaine_action?: string | null;
+  prochaine_relance?: string | null;
+  prochaine?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
