@@ -41,16 +41,25 @@ export default function ActionsPage() {
   const [isGenerating, setIsGenerating] = useState(false);
 
   async function loadActions() {
-    const response = await fetch("/api/actions", { cache: "no-store" });
-    const payload = (await response.json().catch(() => null)) as ActionsPayload | null;
-    if (!response.ok || !payload?.ok) {
-      setError(payload?.error ?? "Chargement actions impossible.");
-      return;
+    try {
+      const response = await fetch("/api/actions", { cache: "no-store" });
+      const payload = (await response.json().catch(() => null)) as ActionsPayload | null;
+      console.log("SUPABASE DATA:", payload?.actions);
+      console.log("SUPABASE ERROR:", !response.ok ? payload?.error : null);
+      if (!response.ok || !payload?.ok) {
+        if (!response.ok) {
+          console.error("SUPABASE FULL ERROR:", payload?.error);
+        }
+        setError(payload?.error || "Chargement actions impossible");
+        return;
+      }
+      setRows(payload.actions ?? []);
+      setCampaigns(payload.campaigns ?? []);
+      setAutomationStats(payload.automation ?? null);
+      setError("");
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Chargement actions impossible");
     }
-    setRows(payload.actions ?? []);
-    setCampaigns(payload.campaigns ?? []);
-    setAutomationStats(payload.automation ?? null);
-    setError("");
   }
 
   async function generateActions() {

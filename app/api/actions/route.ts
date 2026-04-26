@@ -742,6 +742,46 @@ async function completeAction(supabase: ReturnType<typeof createAdminClient>, us
   return { ok: Boolean(result.data), error: result.data ? "" : "Action introuvable." };
 }
 
+async function loadActionsForPage(supabase: ReturnType<typeof createAdminClient>, userId: string) {
+  let query = supabase.from("commercial_actions").select("*").eq("owner_user_id", userId).limit(20);
+  let result = await query;
+
+  console.log("SUPABASE DATA:", result.data);
+  console.log("SUPABASE ERROR:", result.error);
+  if (result.error) {
+    console.error("SUPABASE FULL ERROR:", result.error);
+  }
+
+  if (result.error && isMissingOwnerUserColumn(result.error.message ?? "")) {
+    query = supabase.from("commercial_actions").select("*").eq("owner_id", userId).limit(20);
+    result = await query;
+    console.log("SUPABASE DATA:", result.data);
+    console.log("SUPABASE ERROR:", result.error);
+    if (result.error) {
+      console.error("SUPABASE FULL ERROR:", result.error);
+    }
+  }
+
+  if (result.error) {
+    const lower = (result.error.message ?? "").toLowerCase();
+    if (lower.includes("column") && lower.includes("owner_id")) {
+      // Last-resort debug fallback to validate the table itself, without owner column filters.
+      result = await supabase.from("commercial_actions").select("*").limit(20);
+      console.log("SUPABASE DATA:", result.data);
+      console.log("SUPABASE ERROR:", result.error);
+      if (result.error) {
+        console.error("SUPABASE FULL ERROR:", result.error);
+      }
+    }
+  }
+
+  if (result.error) {
+    throw new Error(result.error.message ?? "Chargement actions impossible.");
+  }
+
+  return (result.data ?? []) as DbRow[];
+}
+
 export async function GET() {
   try {
     const { user, response } = await requireAuthenticatedUser();
@@ -749,15 +789,21 @@ export async function GET() {
 
     const supabase = createAdminClient();
     const now = new Date();
-    const context = await loadContext(supabase, user.id);
-    const preview = buildAutomationCandidates(context, now);
-    const campaigns = buildCampaignsFromCandidates(preview.candidates);
+    const rawActions = await loadActionsForPage(supabase, user.id);
+
+    const prospectsResult = await fetchOwnedRowsOptional(supabase, "prospects_clients", user.id, "updated_at");
+    const templatesResult = await fetchOwnedRowsOptional(supabase, "email_templates", user.id);
+    const ordersResult = await fetchOwnedRowsOptional(supabase, "orders", user.id, "created_at");
+
+    const prospects = (prospectsResult.data ?? []) as DbRow[];
+    const templates = (templatesResult.data ?? []) as DbRow[];
+    const orders = (ordersResult.data ?? []) as DbRow[];
 
     const prospectById = new Map<string, DbRow>();
     const lastOrderByProspectId = new Map<string, Date>();
 
-    for (const prospect of context.prospects) prospectById.set(asString(readField(prospect, "id")), prospect);
-    for (const order of context.orders) {
+    for (const prospect of prospects) prospectById.set(asString(readField(prospect, "id")), prospect);
+    for (const order of orders) {
       const prospectClientId = asString(readField(order, "prospect_client_id", "client_id"));
       if (!prospectClientId) continue;
       const orderDate = parseDate(readField(order, "order_date", "created_at"));
@@ -766,19 +812,19 @@ export async function GET() {
       if (!current || current < orderDate) lastOrderByProspectId.set(prospectClientId, orderDate);
     }
 
-    const actions = context.actions
+    const actions = rawActions
       .map((row) => {
         const prospectClientId = asString(readField(row, "prospect_client_id"));
         const prospect = prospectById.get(prospectClientId);
         const clientName = prospect ? prospectName(prospect) : "-";
-        return mapAction(row, clientName, context.templates, prospect, lastOrderByProspectId.get(prospectClientId) ?? null);
+        return mapAction(row, clientName, templates, prospect, lastOrderByProspectId.get(prospectClientId) ?? null);
       })
       .sort((a, b) => b.actionDate.localeCompare(a.actionDate));
 
     return NextResponse.json({
       ok: true,
       actions,
-      campaigns,
+      campaigns: [],
       automation: {
         createdCount: 0,
         skippedExistingCount: 0,
@@ -791,7 +837,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("ACTIONS_GET_ERROR", error);
-    return NextResponse.json({ ok: false, error: "Chargement actions impossible." }, { status: 500 });
+    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Chargement actions impossible." }, { status: 500 });
   }
 }
 
