@@ -106,12 +106,13 @@ export default function ActionsPage() {
         <div className="mb-4 rounded-md border border-line bg-white p-3 text-sm text-slate-700">
           {automationStats.createdCount > 0 ? (
             <>
-              <span className="font-medium">Automatisation:</span> {automationStats.createdCount} actions generees,{" "}
-              {automationStats.skippedExistingCount ?? automationStats.skippedDuplicateCount ?? 0}{" "}
-              ignorees car deja existantes.
+              <span className="font-medium">{automationStats.createdCount} actions generees</span>
+              {(automationStats.skippedMissingClientCount ?? 0) + (automationStats.skippedInsertErrorCount ?? 0) > 0 ? (
+                <> - {(automationStats.skippedMissingClientCount ?? 0) + (automationStats.skippedInsertErrorCount ?? 0)} clients ignores (donnees incompletes)</>
+              ) : null}
             </>
           ) : (
-            <>Aucune action automatique a generer pour le moment</>
+            <>Aucune action generee</>
           )}
         </div>
       ) : null}

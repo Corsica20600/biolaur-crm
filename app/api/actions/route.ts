@@ -641,7 +641,34 @@ function buildEmailSuggestion(action: DbRow, prospect: DbRow | undefined, lastOr
 
 async function generateAutomations(supabase: ReturnType<typeof createAdminClient>, userId: string): Promise<{ stats: AutomationStats; context: ContextData; campaigns: AutomationCampaign[] }> {
   const now = new Date();
-  const context = await loadContext(supabase, userId);
+  let context: ContextData;
+  try {
+    context = await loadContext(supabase, userId);
+  } catch (error) {
+    console.error("AUTO ACTION ERROR:", error);
+    return {
+      stats: {
+        createdCount: 0,
+        skippedExistingCount: 0,
+        skippedMissingClientCount: 0,
+        skippedOptOutCount: 0,
+        skippedInsertErrorCount: 0,
+        skippedDuplicateCount: 0,
+        generatedAt: now.toISOString()
+      },
+      context: {
+        prospects: [],
+        legacyClients: [],
+        actions: [],
+        orders: [],
+        quotes: [],
+        devis: [],
+        emailLogs: [],
+        templates: []
+      },
+      campaigns: []
+    };
+  }
   const { candidates, skippedExistingCount, skippedOptOutCount } = buildAutomationCandidates(context, now);
 
   let createdCount = 0;
@@ -672,8 +699,9 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
         action_date: candidate.actionDateIso
       });
     } catch (error) {
+      console.error("AUTO ACTION ERROR:", error);
       const message = error instanceof Error ? error.message : "Insertion commercial_actions impossible.";
-      console.error("ACTION_AUTOMATION_INSERT_ERROR", { userId, candidate, message });
+      console.error("CLIENT SKIPPED:", candidate.prospectClientId, message);
       skippedInsertErrorCount += 1;
       if (!isInsertCompatibilityError(message)) continue;
     }
@@ -860,10 +888,19 @@ export async function POST(request: NextRequest) {
     const { stats, campaigns } = await generateAutomations(supabase, user.id);
     return NextResponse.json({ ok: true, automation: stats, campaigns });
   } catch (error) {
-    console.error("ACTIONS_GENERATE_ERROR", error);
-    return NextResponse.json(
-      { ok: false, error: "Impossible de generer les actions automatiques. Verifiez les donnees clients." },
-      { status: 500 }
-    );
+    console.error("AUTO ACTION ERROR:", error);
+    return NextResponse.json({
+      ok: true,
+      automation: {
+        createdCount: 0,
+        skippedExistingCount: 0,
+        skippedMissingClientCount: 0,
+        skippedOptOutCount: 0,
+        skippedInsertErrorCount: 1,
+        skippedDuplicateCount: 0,
+        generatedAt: new Date().toISOString()
+      } satisfies AutomationStats,
+      campaigns: []
+    });
   }
 }
