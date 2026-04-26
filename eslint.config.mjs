@@ -25,6 +25,17 @@ const eslintConfig = [
       "*.config.ts",
     ],
   },
+  {
+  rules: {
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      {
+        argsIgnorePattern: "^_",
+        varsIgnorePattern: "^_",
+      },
+    ],
+  },
+},
   ...compat.extends(
     "eslint-config-next/core-web-vitals.js",
     "eslint-config-next/typescript.js"
