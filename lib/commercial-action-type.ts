@@ -12,7 +12,9 @@ const ACTION_TYPE_ALIASES: Record<string, CommercialActionType> = {
   visit: "visite",
   relance: "relance",
   relanceauto: "relance",
+  relance_auto: "relance",
   followup: "relance",
+  follow_up: "relance",
   auto: "relance",
   reassort: "relance",
   prospection: "relance",
@@ -23,7 +25,8 @@ const ACTION_TYPE_ALIASES: Record<string, CommercialActionType> = {
   rdv: "rendez_vous",
   meeting: "rendez_vous",
   note: "note",
-  notes: "note"
+  notes: "note",
+  commentaire: "note"
 };
 
 function normalizeActionTypeKey(value: unknown) {
@@ -40,4 +43,8 @@ export function mapCommercialActionType(value: unknown, fallback: CommercialActi
   const key = normalizeActionTypeKey(value);
   if (!key) return fallback;
   return ACTION_TYPE_ALIASES[key] ?? fallback;
+}
+
+export function normalizeCommercialActionType(value: string | null | undefined) {
+  return mapCommercialActionType(value, "relance");
 }

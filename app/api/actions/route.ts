@@ -6,9 +6,11 @@ import { createAdminClient } from "@/supabase/admin";
 type DbRow = Record<string, unknown>;
 type ActionType = CommercialActionType;
 type ActionStatus = "a_faire" | "fait" | "annule";
+type CandidateCategory = "prospect_followup" | "inactive_client" | "pending_order" | "missing_info";
 
 type AutomationCandidate = {
   key: string;
+  category: CandidateCategory;
   prospectClientId: string;
   actionType: string;
   actionDateIso: string;
@@ -54,9 +56,11 @@ type ActionRowPayload = {
 
 type AutomationStats = {
   createdCount: number;
-  skippedDuplicateCount: number;
+  skippedExistingCount: number;
+  skippedMissingClientCount: number;
   skippedOptOutCount: number;
   skippedInsertErrorCount: number;
+  skippedDuplicateCount: number;
   generatedAt: string;
 };
 
@@ -65,12 +69,20 @@ type ContextData = {
   legacyClients: DbRow[];
   actions: DbRow[];
   orders: DbRow[];
+  quotes: DbRow[];
+  devis: DbRow[];
   emailLogs: DbRow[];
   templates: DbRow[];
 };
 
-const OPEN_STATUSES = new Set(["a_faire", "todo", "open"]);
-const DONE_STATUSES = new Set(["fait", "annule", "done", "cancelled", "canceled", "closed"]);
+const OPEN_STATUSES = new Set(["a_faire", "todo", "open", "en_cours", "pending", "a_traiter"]);
+const COMPLETED_ACTION_STATUSES = new Set(["fait", "annule", "termine", "terminee", "terminé", "completed", "done", "closed", "cancelled", "canceled"]);
+const PENDING_STATUSES = new Set(["brouillon", "envoyee", "pending", "draft", "en_attente", "a_valider", "open", "awaiting"]);
+const CLOSED_ORDER_STATUSES = new Set(["validee", "livree", "payee", "annulee", "cancelled", "done", "completed", "closed"]);
+const RECENT_CONTACT_DAYS = 21;
+const INACTIVE_CLIENT_DAYS = 45;
+const CLOSE_DATE_WINDOW_DAYS = 3;
+const MAX_ACTIONS_PER_RUN = 200;
 
 function readField(row: DbRow, ...keys: string[]) {
   for (const key of keys) {
@@ -140,22 +152,22 @@ function normalizeText(value: unknown) {
 }
 
 function normalizeActionStatus(row: DbRow): ActionStatus {
-  const raw = asString(readField(row, "action_status", "statut")).toLowerCase();
-  if (raw === "fait") return "fait";
+  const raw = normalizeText(readField(row, "action_status", "statut", "status"));
+  if (!raw) return "a_faire";
   if (raw === "annule") return "annule";
-  if (DONE_STATUSES.has(raw)) return raw === "annule" ? "annule" : "fait";
+  if (COMPLETED_ACTION_STATUSES.has(raw)) return "fait";
   return "a_faire";
 }
 
 function isOpenAction(row: DbRow) {
-  const raw = asString(readField(row, "action_status", "statut")).toLowerCase();
+  const raw = normalizeText(readField(row, "action_status", "statut", "status"));
   if (!raw) return true;
-  if (DONE_STATUSES.has(raw)) return false;
+  if (COMPLETED_ACTION_STATUSES.has(raw)) return false;
   return OPEN_STATUSES.has(raw) || raw === "a_faire";
 }
 
 function normalizeActionType(row: DbRow): ActionType {
-  return mapCommercialActionType(readField(row, "action_type", "type"), "relance");
+  return mapCommercialActionType(readField(row, "action_type", "type_action", "type"), "relance");
 }
 
 function isOptOut(row: DbRow) {
@@ -169,7 +181,66 @@ function getContactEmail(row: DbRow) {
   return asString(readField(row, "email", "contact_email", "mail"));
 }
 
-function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCandidate, legacyClientId: string | null) {
+function summaryFingerprint(text: string) {
+  return normalizeText(text).replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function areSimilarSummaries(a: string, b: string) {
+  const left = summaryFingerprint(a);
+  const right = summaryFingerprint(b);
+  if (!left || !right) return false;
+  return left.includes(right) || right.includes(left);
+}
+
+function candidateDate(candidate: AutomationCandidate) {
+  return parseDate(candidate.nextActionDateIso ?? candidate.actionDateIso);
+}
+
+function actionPlannedDate(row: DbRow) {
+  return parseDate(readField(row, "next_action_date", "date_prochaine_action", "action_date", "date_action", "created_at"));
+}
+
+function isExistingOpenMatch(actions: DbRow[], candidate: AutomationCandidate) {
+  const mappedType = mapCommercialActionType(candidate.actionType, "relance");
+  const wantedDate = candidateDate(candidate);
+
+  for (const action of actions) {
+    const prospectClientId = asString(readField(action, "prospect_client_id"));
+    if (prospectClientId !== candidate.prospectClientId) continue;
+    if (!isOpenAction(action)) continue;
+
+    const existingType = normalizeActionType(action);
+    if (existingType !== mappedType) continue;
+
+    const existingSummary = asString(readField(action, "summary", "compte_rendu"));
+    if (!areSimilarSummaries(existingSummary, candidate.summary)) continue;
+
+    const existingDate = actionPlannedDate(action);
+    if (!wantedDate || !existingDate) return true;
+
+    const diffDays = Math.abs(existingDate.getTime() - wantedDate.getTime()) / (1000 * 60 * 60 * 24);
+    if (diffDays <= CLOSE_DATE_WINDOW_DAYS) return true;
+  }
+
+  return false;
+}
+
+function isPendingRecord(row: DbRow) {
+  const status = normalizeText(readField(row, "order_status", "quote_status", "devis_status", "statut", "status", "state"));
+  if (!status) return false;
+  if (CLOSED_ORDER_STATUSES.has(status)) return false;
+  return PENDING_STATUSES.has(status);
+}
+
+function isMissingContactInfo(row: DbRow) {
+  const companyName = asString(readField(row, "company_name", "trade_name", "name"));
+  const email = getContactEmail(row);
+  const phone = asString(readField(row, "phone"));
+  const mobile = asString(readField(row, "mobile"));
+  return !companyName || !email || (!phone && !mobile);
+}
+
+function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCandidate, legacyClientId: string) {
   const actionType = mapCommercialActionType(candidate.actionType, "relance");
   const nextActionType = candidate.nextActionType ? mapCommercialActionType(candidate.nextActionType, "relance") : null;
 
@@ -189,6 +260,7 @@ function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCand
     compte_rendu: candidate.summary,
     details: `AUTO_KEY:${candidate.key}\n${candidate.details}`,
     prochaine_action: `AUTO_KEY:${candidate.key}\n${candidate.details}`,
+    // Future manual step: for "email" actions, trigger Brevo from an explicit user action only.
     next_action_type: nextActionType,
     next_action_date: candidate.nextActionDateIso ?? null,
     date_prochaine_action: candidate.nextActionDateIso ?? null
@@ -202,13 +274,16 @@ async function insertCommercialActionCompat(supabase: ReturnType<typeof createAd
     if (!error) return;
 
     const message = error.message ?? "Insertion commercial_actions impossible.";
-    const missingColumn = extractMissingColumn(error.message ?? "");
+    const missingColumn = extractMissingColumn(message);
+    if (missingColumn === "client_id") {
+      throw new Error(`MISSING_CLIENT_ID_COLUMN:${message}`);
+    }
     if (missingColumn && Object.prototype.hasOwnProperty.call(workingPayload, missingColumn)) {
       delete workingPayload[missingColumn];
       continue;
     }
 
-    const foreignKeyColumn = extractForeignKeyColumn(error.message ?? "");
+    const foreignKeyColumn = extractForeignKeyColumn(message);
     if (foreignKeyColumn === "client_id") {
       throw new Error(`FK:client_id:${message}`);
     }
@@ -217,12 +292,14 @@ async function insertCommercialActionCompat(supabase: ReturnType<typeof createAd
       continue;
     }
 
-    const notNullColumn = extractNotNullColumn(error.message ?? "");
+    const notNullColumn = extractNotNullColumn(message);
     if (notNullColumn) {
       throw new Error(`NOT_NULL:${notNullColumn}:${message}`);
     }
+
     throw new Error(message);
   }
+
   throw new Error("Insertion commercial_actions impossible: compatibilite schema epuisee.");
 }
 
@@ -242,23 +319,29 @@ async function fetchOwnedRows(supabase: ReturnType<typeof createAdminClient>, ta
 async function fetchOwnedRowsOptional(supabase: ReturnType<typeof createAdminClient>, table: string, userId: string, orderByColumn?: string) {
   const result = await fetchOwnedRows(supabase, table, userId, orderByColumn);
   const message = result.error?.message ?? "";
-  if (message.toLowerCase().includes("relation") && message.toLowerCase().includes("does not exist")) {
+  const lower = message.toLowerCase();
+  if (
+    (lower.includes("relation") && lower.includes("does not exist")) ||
+    (lower.includes("column") && (lower.includes("owner_user_id") || lower.includes("owner_id")))
+  ) {
     return { data: [] as unknown[], error: null as null };
   }
   return result;
 }
 
 async function loadContext(supabase: ReturnType<typeof createAdminClient>, userId: string): Promise<ContextData> {
-  const [prospectsResult, legacyClientsResult, actionsResult, ordersResult, emailLogsResult, templatesResult] = await Promise.all([
+  const [prospectsResult, legacyClientsResult, actionsResult, ordersResult, quotesResult, devisResult, emailLogsResult, templatesResult] = await Promise.all([
     fetchOwnedRows(supabase, "prospects_clients", userId, "updated_at"),
     fetchOwnedRowsOptional(supabase, "clients", userId, "updated_at"),
     fetchOwnedRows(supabase, "commercial_actions", userId, "created_at"),
-    fetchOwnedRows(supabase, "orders", userId, "created_at"),
-    fetchOwnedRows(supabase, "email_logs", userId, "created_at"),
+    fetchOwnedRowsOptional(supabase, "orders", userId, "created_at"),
+    fetchOwnedRowsOptional(supabase, "quotes", userId, "created_at"),
+    fetchOwnedRowsOptional(supabase, "devis", userId, "created_at"),
+    fetchOwnedRowsOptional(supabase, "email_logs", userId, "created_at"),
     supabase.from("email_templates").select("*").eq("is_active", true)
   ]);
 
-  const firstError = prospectsResult.error ?? legacyClientsResult.error ?? actionsResult.error ?? ordersResult.error ?? emailLogsResult.error ?? templatesResult.error;
+  const firstError = prospectsResult.error ?? legacyClientsResult.error ?? actionsResult.error ?? ordersResult.error ?? quotesResult.error ?? devisResult.error ?? emailLogsResult.error ?? templatesResult.error;
   if (firstError) throw new Error(firstError.message);
 
   return {
@@ -266,6 +349,8 @@ async function loadContext(supabase: ReturnType<typeof createAdminClient>, userI
     legacyClients: (legacyClientsResult.data ?? []) as DbRow[],
     actions: (actionsResult.data ?? []) as DbRow[],
     orders: (ordersResult.data ?? []) as DbRow[],
+    quotes: (quotesResult.data ?? []) as DbRow[],
+    devis: (devisResult.data ?? []) as DbRow[],
     emailLogs: (emailLogsResult.data ?? []) as DbRow[],
     templates: (templatesResult.data ?? []) as DbRow[]
   };
@@ -318,6 +403,7 @@ function isInsertCompatibilityError(message: string) {
   return (
     message.startsWith("NOT_NULL:client_id:") ||
     message.startsWith("FK:client_id:") ||
+    message.startsWith("MISSING_CLIENT_ID_COLUMN:") ||
     message.toLowerCase().includes("violates not-null constraint") ||
     message.toLowerCase().includes("violates foreign key constraint")
   );
@@ -338,168 +424,174 @@ function campaignTemplate(title: string, targetCount: number, subject: string, m
   };
 }
 
-function buildCampaigns(context: ContextData, now: Date) {
-  const lastOrderByProspectId = new Map<string, Date>();
-  for (const order of context.orders) {
-    const prospectClientId = asString(readField(order, "prospect_client_id", "client_id"));
-    if (!prospectClientId) continue;
-    const orderDate = parseDate(readField(order, "order_date", "created_at"));
-    if (!orderDate) continue;
-    const current = lastOrderByProspectId.get(prospectClientId);
-    if (!current || current < orderDate) lastOrderByProspectId.set(prospectClientId, orderDate);
-  }
-
-  const isDormantClient = (prospect: DbRow) => {
-    if (asString(readField(prospect, "record_type", "type")) !== "client") return false;
-    const id = asString(readField(prospect, "id"));
-    const lastOrderDate = lastOrderByProspectId.get(id);
-    if (!lastOrderDate) return false;
-    const diffDays = Math.floor((now.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24));
-    return diffDays >= 45;
+function buildCampaignsFromCandidates(candidates: AutomationCandidate[]) {
+  const counts = {
+    prospect_followup: candidates.filter((item) => item.category === "prospect_followup").length,
+    inactive_client: candidates.filter((item) => item.category === "inactive_client").length,
+    pending_order: candidates.filter((item) => item.category === "pending_order").length,
+    missing_info: candidates.filter((item) => item.category === "missing_info").length
   };
 
   return [
-    campaignTemplate(
-      "Prospection CHR",
-      context.prospects.filter((row) => !isOptOut(row) && getContactEmail(row) && asString(readField(row, "record_type")) === "prospect" && asString(readField(row, "client_type")) === "CHR").length,
-      "Solutions hygiene CHR: proposition de decouverte",
-      "Bonjour, nous pouvons vous proposer une selection adaptee a votre etablissement. Repondez a ce message pour planifier un appel de 10 minutes."
-    ),
-    campaignTemplate(
-      "Collectivites",
-      context.prospects.filter((row) => !isOptOut(row) && getContactEmail(row) && asString(readField(row, "client_type")) === "collectivite").length,
-      "Offre hygiene et entretien pour collectivites",
-      "Bonjour, nous pouvons vous partager une proposition dediee aux besoins des collectivites. Souhaitez-vous recevoir une recommandation personnalisee ?"
-    ),
-    campaignTemplate(
-      "Commerces de bouche",
-      context.prospects.filter((row) => !isOptOut(row) && getContactEmail(row) && asString(readField(row, "client_type")) === "commerce_de_bouche").length,
-      "Selection produits pour commerces de bouche",
-      "Bonjour, nous avons prepare une selection orientee nettoyage et hygiene pour commerces de bouche. Dites-nous vos priorites et nous adaptons la proposition."
-    ),
-    campaignTemplate(
-      "Clients dormants",
-      context.prospects.filter((row) => !isOptOut(row) && getContactEmail(row) && isDormantClient(row)).length,
-      "Nous reprenons le suivi de vos approvisionnements",
-      "Bonjour, nous revenons vers vous pour vous proposer un point rapide sur vos besoins actuels et vos frequences de reapprovisionnement."
-    ),
-    campaignTemplate(
-      "Reassort produits",
-      context.prospects.filter((row) => !isOptOut(row) && getContactEmail(row) && isDormantClient(row)).length,
-      "Reassort recommande selon vos commandes precedentes",
-      "Bonjour, nous avons prepare une proposition de reassort basee sur vos dernieres commandes. Souhaitez-vous que nous la partagions ?"
-    )
+    campaignTemplate("Prospects sans contact recent", counts.prospect_followup, "Relance prospect", "Premier contact ou suivi commercial a realiser."),
+    campaignTemplate("Clients inactifs", counts.inactive_client, "Relance client inactif", "Reprise de contact et qualification des besoins."),
+    campaignTemplate("Commandes ou devis en attente", counts.pending_order, "Relance en attente", "Suivi des commandes/devis en attente sans envoi automatique."),
+    campaignTemplate("Infos client a completer", counts.missing_info, "Completer la fiche", "Completer les informations avant la prochaine action.")
   ];
 }
 
-function maybeCreateCandidate(
-  candidates: Map<string, AutomationCandidate>,
-  openKeys: Set<string>,
-  candidate: AutomationCandidate,
-  isOptOutContact: boolean,
-  stats: { skippedDuplicateCount: number; skippedOptOutCount: number }
-) {
-  const key = candidate.key.toLowerCase();
-  if (isOptOutContact) {
-    stats.skippedOptOutCount += 1;
-    return;
+function collectLastDates(rows: DbRow[], keys: string[]) {
+  const byProspect = new Map<string, Date>();
+
+  for (const row of rows) {
+    const prospectId = asString(readField(row, "prospect_client_id", "client_id", "prospect_id"));
+    if (!prospectId) continue;
+
+    const date = parseDate(readField(row, ...keys));
+    if (!date) continue;
+
+    const current = byProspect.get(prospectId);
+    if (!current || current < date) byProspect.set(prospectId, date);
   }
-  if (openKeys.has(key) || candidates.has(key)) {
-    stats.skippedDuplicateCount += 1;
-    return;
-  }
-  candidates.set(key, candidate);
+
+  return byProspect;
+}
+
+function createCandidateFactory(context: ContextData) {
+  const candidates = new Map<string, AutomationCandidate>();
+  const stats = { skippedExistingCount: 0, skippedOptOutCount: 0 };
+
+  const addCandidate = (candidate: AutomationCandidate, isOptOutContact: boolean) => {
+    if (isOptOutContact) {
+      stats.skippedOptOutCount += 1;
+      return;
+    }
+
+    const dedupeKey = `${candidate.prospectClientId}:${mapCommercialActionType(candidate.actionType, "relance")}:${summaryFingerprint(candidate.summary)}:${(candidate.nextActionDateIso ?? candidate.actionDateIso).slice(0, 10)}`;
+    if (candidates.has(dedupeKey) || isExistingOpenMatch(context.actions, candidate)) {
+      stats.skippedExistingCount += 1;
+      return;
+    }
+
+    candidates.set(dedupeKey, candidate);
+  };
+
+  return { addCandidate, candidates, stats };
 }
 
 function buildAutomationCandidates(context: ContextData, now: Date) {
-  const candidates = new Map<string, AutomationCandidate>();
-  const stats = { skippedDuplicateCount: 0, skippedOptOutCount: 0 };
+  const { addCandidate, candidates, stats } = createCandidateFactory(context);
 
-  const actionsByProspectId = new Map<string, DbRow[]>();
-  const openKeys = new Set<string>();
-  for (const action of context.actions) {
-    const prospectClientId = asString(readField(action, "prospect_client_id"));
-    if (!prospectClientId) continue;
-    const bucket = actionsByProspectId.get(prospectClientId) ?? [];
-    bucket.push(action);
-    actionsByProspectId.set(prospectClientId, bucket);
-    if (isOpenAction(action)) {
-      const keyFromSummary = extractAutomationKey(asString(readField(action, "summary", "compte_rendu")));
-      const keyFromDetails = extractAutomationKey(asString(readField(action, "details", "prochaine_action")));
-      const key = keyFromSummary || keyFromDetails;
-      if (key) openKeys.add(key);
-    }
-  }
+  const lastActionByProspect = collectLastDates(context.actions, ["action_date", "date_action", "created_at"]);
+  const lastOrderByProspect = collectLastDates(context.orders, ["order_date", "created_at"]);
+  const lastEmailByProspect = collectLastDates(context.emailLogs, ["sent_at", "created_at"]);
 
-  const ordersByProspectId = new Map<string, DbRow[]>();
-  for (const order of context.orders) {
-    const prospectClientId = asString(readField(order, "prospect_client_id", "client_id"));
-    if (!prospectClientId) continue;
-    const bucket = ordersByProspectId.get(prospectClientId) ?? [];
-    bucket.push(order);
-    ordersByProspectId.set(prospectClientId, bucket);
-  }
-
-  const emailsByProspectId = new Map<string, DbRow[]>();
-  for (const email of context.emailLogs) {
-    const prospectClientId = asString(readField(email, "prospect_client_id", "client_id"));
-    if (!prospectClientId) continue;
-    const bucket = emailsByProspectId.get(prospectClientId) ?? [];
-    bucket.push(email);
-    emailsByProspectId.set(prospectClientId, bucket);
+  const prospectsById = new Map<string, DbRow>();
+  for (const prospect of context.prospects) {
+    prospectsById.set(asString(readField(prospect, "id")), prospect);
   }
 
   for (const prospect of context.prospects) {
     const prospectClientId = asString(readField(prospect, "id"));
     if (!prospectClientId) continue;
 
-    const optOut = isOptOut(prospect);
-    const recordType = asString(readField(prospect, "record_type", "type")).toLowerCase();
     const name = prospectName(prospect);
-    const createdAt = parseDate(readField(prospect, "created_at")) ?? now;
+    const optOut = isOptOut(prospect);
+    const recordType = normalizeText(readField(prospect, "record_type", "type"));
 
-    const actionRows = actionsByProspectId.get(prospectClientId) ?? [];
-    const emailRows = emailsByProspectId.get(prospectClientId) ?? [];
-    const orderRows = ordersByProspectId.get(prospectClientId) ?? [];
+    const lastAction = lastActionByProspect.get(prospectClientId) ?? null;
+    const lastEmail = lastEmailByProspect.get(prospectClientId) ?? null;
+    const lastOrder = lastOrderByProspect.get(prospectClientId) ?? null;
 
-    const lastActionDate = actionRows
-      .map((row) => parseDate(readField(row, "action_date", "date_action", "created_at")))
-      .filter((row): row is Date => Boolean(row))
-      .sort((a, b) => b.getTime() - a.getTime())[0];
-    const lastEmailDate = emailRows
-      .map((row) => parseDate(readField(row, "sent_at", "created_at")))
-      .filter((row): row is Date => Boolean(row))
-      .sort((a, b) => b.getTime() - a.getTime())[0];
-    const lastOrderDate = orderRows
-      .map((row) => parseDate(readField(row, "order_date", "created_at")))
-      .filter((row): row is Date => Boolean(row))
-      .sort((a, b) => b.getTime() - a.getTime())[0];
+    const lastInteraction = [lastAction, lastEmail, lastOrder]
+      .filter((item): item is Date => Boolean(item))
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
 
-    const hasAnyInteraction = Boolean(lastActionDate || lastEmailDate || lastOrderDate);
-    const daysSinceLastAction = lastActionDate ? Math.floor((now.getTime() - lastActionDate.getTime()) / (1000 * 60 * 60 * 24)) : Number.POSITIVE_INFINITY;
-    const daysSinceLastOrder = lastOrderDate ? Math.floor((now.getTime() - lastOrderDate.getTime()) / (1000 * 60 * 60 * 24)) : Number.POSITIVE_INFINITY;
+    const daysSinceInteraction = lastInteraction ? Math.floor((now.getTime() - lastInteraction.getTime()) / (1000 * 60 * 60 * 24)) : Number.POSITIVE_INFINITY;
+    const daysSinceOrder = lastOrder ? Math.floor((now.getTime() - lastOrder.getTime()) / (1000 * 60 * 60 * 24)) : Number.POSITIVE_INFINITY;
 
-    if (recordType === "prospect" && !hasAnyInteraction) {
-      const actionDate = addDays(createdAt, 1);
-      maybeCreateCandidate(candidates, openKeys, { key: `prospect_j1:${prospectClientId}`, prospectClientId, actionType: "relance", actionDateIso: actionDate.toISOString(), summary: `Relance J+1 - ${name}`, details: "Prospect cree sans contact. Relancer sous 24h.", nextActionDateIso: addDays(actionDate, 2).toISOString(), nextActionType: "email" }, optOut, stats);
+    if (recordType === "prospect" && daysSinceInteraction > RECENT_CONTACT_DAYS) {
+      const actionDate = Number.isFinite(daysSinceInteraction) ? now : addDays(now, 1);
+      addCandidate(
+        {
+          key: `auto:prospect:${prospectClientId}`,
+          category: "prospect_followup",
+          prospectClientId,
+          actionType: "appel",
+          actionDateIso: actionDate.toISOString(),
+          nextActionDateIso: actionDate.toISOString(),
+          summary: "Relancer le prospect - premier contact ou suivi commercial",
+          details: `Prospect cible: ${name}.`
+        },
+        optOut
+      );
     }
-    if (lastEmailDate) {
-      const actionDate = addDays(lastEmailDate, 3);
-      maybeCreateCandidate(candidates, openKeys, { key: `email_j3:${prospectClientId}:${lastEmailDate.toISOString().slice(0, 10)}`, prospectClientId, actionType: "relance", actionDateIso: actionDate.toISOString(), summary: `Relance J+3 apres email - ${name}`, details: "Verifier retour apres email envoye.", nextActionDateIso: addDays(actionDate, 4).toISOString(), nextActionType: "appel" }, optOut, stats);
+
+    if (recordType === "client" && daysSinceOrder >= INACTIVE_CLIENT_DAYS) {
+      const actionDate = addDays(now, 2);
+      addCandidate(
+        {
+          key: `auto:inactive:${prospectClientId}`,
+          category: "inactive_client",
+          prospectClientId,
+          actionType: "relance",
+          actionDateIso: actionDate.toISOString(),
+          nextActionDateIso: actionDate.toISOString(),
+          summary: "Relance client inactif - reprendre contact et identifier les besoins",
+          details: `Client cible: ${name}. Derniere commande: ${lastOrder ? lastOrder.toISOString().slice(0, 10) : "aucune"}.`
+        },
+        optOut
+      );
     }
-    if (lastOrderDate) {
-      const actionDate = addDays(lastOrderDate, 15);
-      maybeCreateCandidate(candidates, openKeys, { key: `order_j15:${prospectClientId}:${lastOrderDate.toISOString().slice(0, 10)}`, prospectClientId, actionType: "relance", actionDateIso: actionDate.toISOString(), summary: `Suivi commande J+15 - ${name}`, details: "Suivi post-commande et proposition de reassort.", nextActionDateIso: addDays(actionDate, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
-    }
-    if (recordType === "client" && Number.isFinite(daysSinceLastOrder) && daysSinceLastOrder >= 45) {
-      maybeCreateCandidate(candidates, openKeys, { key: `client_dormant_45:${prospectClientId}`, prospectClientId, actionType: "relance", actionDateIso: now.toISOString(), summary: `Relance reassort client dormant - ${name}`, details: "Client sans commande depuis 45 jours.", nextActionDateIso: addDays(now, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
-    }
-    if (recordType === "prospect" && daysSinceLastAction >= 30) {
-      maybeCreateCandidate(candidates, openKeys, { key: `prospect_inactive_30:${prospectClientId}`, prospectClientId, actionType: "relance", actionDateIso: now.toISOString(), summary: `Relance prospection 30 jours - ${name}`, details: "Prospect sans action recente.", nextActionDateIso: addDays(now, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
+
+    if (isMissingContactInfo(prospect)) {
+      const actionDate = addDays(now, 7);
+      addCandidate(
+        {
+          key: `auto:missing-info:${prospectClientId}`,
+          category: "missing_info",
+          prospectClientId,
+          actionType: "note",
+          actionDateIso: actionDate.toISOString(),
+          nextActionDateIso: actionDate.toISOString(),
+          summary: "Completer les informations client avant prochaine action",
+          details: `Verifier email/telephone/societe pour ${name}.`
+        },
+        false
+      );
     }
   }
 
-  return { candidates: Array.from(candidates.values()).sort((a, b) => a.actionDateIso.localeCompare(b.actionDateIso)), ...stats };
+  const pendingSources = [...context.orders, ...context.quotes, ...context.devis];
+  for (const row of pendingSources) {
+    if (!isPendingRecord(row)) continue;
+
+    const prospectClientId = asString(readField(row, "prospect_client_id", "client_id", "prospect_id"));
+    if (!prospectClientId) continue;
+
+    const prospect = prospectsById.get(prospectClientId);
+    const reference = asString(readField(row, "order_number", "quote_number", "devis_number", "reference", "number", "id"));
+
+    addCandidate(
+      {
+        key: `auto:pending:${prospectClientId}:${reference || "record"}`,
+        category: "pending_order",
+        prospectClientId,
+        actionType: "email",
+        actionDateIso: now.toISOString(),
+        nextActionDateIso: now.toISOString(),
+        summary: "Relancer le devis ou la commande en attente",
+        details: `Element en attente: ${reference || "sans reference"}. Aucun envoi Brevo automatique.`
+      },
+      prospect ? isOptOut(prospect) : false
+    );
+  }
+
+  return {
+    candidates: Array.from(candidates.values()).sort((a, b) => a.actionDateIso.localeCompare(b.actionDateIso)),
+    skippedExistingCount: stats.skippedExistingCount,
+    skippedOptOutCount: stats.skippedOptOutCount
+  };
 }
 
 function pickTemplate(templates: DbRow[], preferredCodes: string[]) {
@@ -508,10 +600,12 @@ function pickTemplate(templates: DbRow[], preferredCodes: string[]) {
     const code = asString(readField(template, "code")).toLowerCase();
     if (code) byCode.set(code, template);
   }
+
   for (const code of preferredCodes) {
     const template = byCode.get(code);
     if (template) return { templateId: asString(readField(template, "id")), templateCode: asString(readField(template, "code")) };
   }
+
   const first = templates[0];
   return { templateId: first ? asString(readField(first, "id")) : "", templateCode: first ? asString(readField(first, "code")) : "" };
 }
@@ -527,7 +621,9 @@ function buildEmailSuggestion(action: DbRow, prospect: DbRow | undefined, lastOr
   const actionType = normalizeActionType(action);
   const { templateCode, templateId } = pickTemplate(templates, ["send_order", "send_sales_pack", "send_account_opening"]);
   const lastOrderLabel = lastOrderDate ? lastOrderDate.toISOString().slice(0, 10) : "pas de commande recente";
-  const subject = actionType === "relance" ? `Suivi commercial ${clientType} - ${name}` : `Suivi commercial - ${name}`;
+
+  // Future hook: this payload is prepared for manual Brevo sending from the UI, never auto-sent here.
+  const subject = actionType === "email" ? `Relance email manuelle - ${name}` : `Suivi commercial ${clientType} - ${name}`;
   const message = [
     "Bonjour,",
     "",
@@ -543,36 +639,61 @@ function buildEmailSuggestion(action: DbRow, prospect: DbRow | undefined, lastOr
   return { recipient, subject, message, templateCode, templateId: templateId || undefined };
 }
 
-async function generateAutomations(supabase: ReturnType<typeof createAdminClient>, userId: string, mode: "load" | "manual"): Promise<{ stats: AutomationStats; context: ContextData; campaigns: AutomationCampaign[] }> {
+async function generateAutomations(supabase: ReturnType<typeof createAdminClient>, userId: string): Promise<{ stats: AutomationStats; context: ContextData; campaigns: AutomationCampaign[] }> {
   const now = new Date();
   const context = await loadContext(supabase, userId);
-  const { candidates, skippedDuplicateCount, skippedOptOutCount } = buildAutomationCandidates(context, now);
-  const maxCreates = mode === "load" ? 12 : 150;
-  let skippedInsertErrorCount = 0;
+  const { candidates, skippedExistingCount, skippedOptOutCount } = buildAutomationCandidates(context, now);
 
   let createdCount = 0;
-  for (const candidate of candidates.slice(0, maxCreates)) {
+  let skippedMissingClientCount = 0;
+  let skippedInsertErrorCount = 0;
+
+  for (const candidate of candidates.slice(0, MAX_ACTIONS_PER_RUN)) {
     const prospect = context.prospects.find((row) => asString(readField(row, "id")) === candidate.prospectClientId);
-    const legacyClientId = prospect ? resolveLegacyClientId(prospect, context.legacyClients) : null;
+    if (!prospect) continue;
+
+    const legacyClientId = resolveLegacyClientId(prospect, context.legacyClients);
+    if (!legacyClientId) {
+      skippedMissingClientCount += 1;
+      continue;
+    }
+
+    if (isExistingOpenMatch(context.actions, candidate)) continue;
 
     try {
       await insertCommercialActionCompat(supabase, buildActionInsertPayload(userId, candidate, legacyClientId));
       createdCount += 1;
+      context.actions.push({
+        prospect_client_id: candidate.prospectClientId,
+        action_type: mapCommercialActionType(candidate.actionType, "relance"),
+        action_status: "a_faire",
+        summary: candidate.summary,
+        next_action_date: candidate.nextActionDateIso,
+        action_date: candidate.actionDateIso
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Insertion commercial_actions impossible.";
-      if (isInsertCompatibilityError(message)) {
-        skippedInsertErrorCount += 1;
-        continue;
-      }
-      throw error;
+      console.error("ACTION_AUTOMATION_INSERT_ERROR", { userId, candidate, message });
+      skippedInsertErrorCount += 1;
+      if (!isInsertCompatibilityError(message)) continue;
     }
   }
 
   const refreshedContext = createdCount > 0 ? await loadContext(supabase, userId) : context;
+  const campaigns = buildCampaignsFromCandidates(candidates);
+
   return {
-    stats: { createdCount, skippedDuplicateCount, skippedOptOutCount, skippedInsertErrorCount, generatedAt: now.toISOString() },
+    stats: {
+      createdCount,
+      skippedExistingCount,
+      skippedMissingClientCount,
+      skippedOptOutCount,
+      skippedInsertErrorCount,
+      skippedDuplicateCount: skippedExistingCount,
+      generatedAt: now.toISOString()
+    },
     context: refreshedContext,
-    campaigns: buildCampaigns(refreshedContext, now)
+    campaigns
   };
 }
 
@@ -627,7 +748,10 @@ export async function GET() {
     if (response || !user) return response;
 
     const supabase = createAdminClient();
-    const { stats, context, campaigns } = await generateAutomations(supabase, user.id, "load");
+    const now = new Date();
+    const context = await loadContext(supabase, user.id);
+    const preview = buildAutomationCandidates(context, now);
+    const campaigns = buildCampaignsFromCandidates(preview.candidates);
 
     const prospectById = new Map<string, DbRow>();
     const lastOrderByProspectId = new Map<string, Date>();
@@ -651,9 +775,23 @@ export async function GET() {
       })
       .sort((a, b) => b.actionDate.localeCompare(a.actionDate));
 
-    return NextResponse.json({ ok: true, actions, campaigns, automation: stats });
+    return NextResponse.json({
+      ok: true,
+      actions,
+      campaigns,
+      automation: {
+        createdCount: 0,
+        skippedExistingCount: 0,
+        skippedMissingClientCount: 0,
+        skippedOptOutCount: 0,
+        skippedInsertErrorCount: 0,
+        skippedDuplicateCount: 0,
+        generatedAt: now.toISOString()
+      } satisfies AutomationStats
+    });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Chargement actions impossible." }, { status: 500 });
+    console.error("ACTIONS_GET_ERROR", error);
+    return NextResponse.json({ ok: false, error: "Chargement actions impossible." }, { status: 500 });
   }
 }
 
@@ -673,9 +811,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    const { stats, campaigns } = await generateAutomations(supabase, user.id, "manual");
+    const { stats, campaigns } = await generateAutomations(supabase, user.id);
     return NextResponse.json({ ok: true, automation: stats, campaigns });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Generation automatique impossible." }, { status: 500 });
+    console.error("ACTIONS_GENERATE_ERROR", error);
+    return NextResponse.json(
+      { ok: false, error: "Impossible de generer les actions automatiques. Verifiez les donnees clients." },
+      { status: 500 }
+    );
   }
 }
