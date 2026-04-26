@@ -62,6 +62,7 @@ type AutomationStats = {
   skippedInsertErrorCount: number;
   skippedDuplicateCount: number;
   generatedAt: string;
+  reason?: string;
 };
 
 type ContextData = {
@@ -240,6 +241,20 @@ function isMissingContactInfo(row: DbRow) {
   return !companyName || !email || (!phone && !mobile);
 }
 
+function isEligibleProspect(row: DbRow) {
+  const id = asString(readField(row, "id"));
+  if (!id) return false;
+
+  const commercialStatus = normalizeText(readField(row, "commercial_status", "status"));
+  if (commercialStatus === "inactif" || commercialStatus === "perdu") return false;
+
+  return true;
+}
+
+function hasOpenActionForProspect(actions: DbRow[], prospectClientId: string) {
+  return actions.some((action) => asString(readField(action, "prospect_client_id")) === prospectClientId && isOpenAction(action));
+}
+
 function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCandidate, legacyClientId: string) {
   const actionType = mapCommercialActionType(candidate.actionType, "relance");
   const nextActionType = candidate.nextActionType ? mapCommercialActionType(candidate.nextActionType, "relance") : null;
@@ -399,7 +414,7 @@ function resolveLegacyClientId(prospect: DbRow, legacyClients: DbRow[]) {
   return null;
 }
 
-function isInsertCompatibilityError(message: string) {
+function _isInsertCompatibilityError(message: string) {
   return (
     message.startsWith("NOT_NULL:client_id:") ||
     message.startsWith("FK:client_id:") ||
@@ -479,7 +494,7 @@ function createCandidateFactory(context: ContextData) {
   return { addCandidate, candidates, stats };
 }
 
-function buildAutomationCandidates(context: ContextData, now: Date) {
+function _buildAutomationCandidates(context: ContextData, now: Date) {
   const { addCandidate, candidates, stats } = createCandidateFactory(context);
 
   const lastActionByProspect = collectLastDates(context.actions, ["action_date", "date_action", "created_at"]);
@@ -645,7 +660,7 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
   try {
     context = await loadContext(supabase, userId);
   } catch (error) {
-    console.error("AUTO ACTION ERROR:", error);
+    console.error("AUTO ACTIONS ERROR:", error);
     return {
       stats: {
         createdCount: 0,
@@ -654,7 +669,8 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
         skippedOptOutCount: 0,
         skippedInsertErrorCount: 0,
         skippedDuplicateCount: 0,
-        generatedAt: now.toISOString()
+        generatedAt: now.toISOString(),
+        reason: "Aucun client trouve"
       },
       context: {
         prospects: [],
@@ -669,56 +685,92 @@ async function generateAutomations(supabase: ReturnType<typeof createAdminClient
       campaigns: []
     };
   }
-  const { candidates, skippedExistingCount, skippedOptOutCount } = buildAutomationCandidates(context, now);
+
+  const clients = context.prospects.filter(isEligibleProspect).slice(0, MAX_ACTIONS_PER_RUN);
+  console.log("AUTO ACTIONS - clients trouvés:", clients.length);
 
   let createdCount = 0;
+  let skippedCount = 0;
+  let skippedExistingCount = 0;
   let skippedMissingClientCount = 0;
   let skippedInsertErrorCount = 0;
 
-  for (const candidate of candidates.slice(0, MAX_ACTIONS_PER_RUN)) {
-    const prospect = context.prospects.find((row) => asString(readField(row, "id")) === candidate.prospectClientId);
-    if (!prospect) continue;
-
-    const legacyClientId = resolveLegacyClientId(prospect, context.legacyClients);
-    if (!legacyClientId) {
+  for (const client of clients) {
+    const prospectClientId = asString(readField(client, "id"));
+    if (!prospectClientId) {
+      skippedCount += 1;
       skippedMissingClientCount += 1;
       continue;
     }
 
-    if (isExistingOpenMatch(context.actions, candidate)) continue;
+    if (hasOpenActionForProspect(context.actions, prospectClientId)) {
+      skippedCount += 1;
+      skippedExistingCount += 1;
+      continue;
+    }
+
+    const legacyClientId = resolveLegacyClientId(client, context.legacyClients);
+    if (context.legacyClients.length > 0 && !legacyClientId) {
+      skippedCount += 1;
+      skippedMissingClientCount += 1;
+      continue;
+    }
+
+    const nextDate = addDays(now, 2).toISOString();
+    const payload = buildActionInsertPayload(userId, {
+      key: `auto:relance:${prospectClientId}`,
+      category: "inactive_client",
+      prospectClientId,
+      actionType: "relance",
+      actionDateIso: now.toISOString(),
+      nextActionDateIso: nextDate,
+      summary: "Relance automatique - reprendre contact avec le client",
+      details: "Action generee automatiquement."
+    }, legacyClientId ?? prospectClientId);
 
     try {
-      await insertCommercialActionCompat(supabase, buildActionInsertPayload(userId, candidate, legacyClientId));
+      await insertCommercialActionCompat(supabase, payload);
       createdCount += 1;
       context.actions.push({
-        prospect_client_id: candidate.prospectClientId,
-        action_type: mapCommercialActionType(candidate.actionType, "relance"),
+        prospect_client_id: prospectClientId,
+        action_type: "relance",
         action_status: "a_faire",
-        summary: candidate.summary,
-        next_action_date: candidate.nextActionDateIso,
-        action_date: candidate.actionDateIso
+        summary: "Relance automatique - reprendre contact avec le client",
+        next_action_date: nextDate,
+        action_date: now.toISOString()
       });
     } catch (error) {
-      console.error("AUTO ACTION ERROR:", error);
+      console.error("AUTO ACTIONS ERROR:", error);
       const message = error instanceof Error ? error.message : "Insertion commercial_actions impossible.";
-      console.error("CLIENT SKIPPED:", candidate.prospectClientId, message);
+      console.error("CLIENT SKIPPED:", prospectClientId, message);
+      skippedCount += 1;
       skippedInsertErrorCount += 1;
-      if (!isInsertCompatibilityError(message)) continue;
     }
   }
 
+  console.log("AUTO ACTIONS - actions créées:", createdCount);
+  console.log("AUTO ACTIONS - clients ignorés:", skippedCount);
+
   const refreshedContext = createdCount > 0 ? await loadContext(supabase, userId) : context;
-  const campaigns = buildCampaignsFromCandidates(candidates);
+  const campaigns = buildCampaignsFromCandidates([]);
+
+  let reason = "";
+  if (createdCount === 0) {
+    if (!clients.length) reason = "Aucun client trouve";
+    else if (skippedExistingCount === clients.length) reason = "Toutes les actions existent deja";
+    else reason = "Aucun client eligible";
+  }
 
   return {
     stats: {
       createdCount,
       skippedExistingCount,
       skippedMissingClientCount,
-      skippedOptOutCount,
+      skippedOptOutCount: 0,
       skippedInsertErrorCount,
       skippedDuplicateCount: skippedExistingCount,
-      generatedAt: now.toISOString()
+      generatedAt: now.toISOString(),
+      reason
     },
     context: refreshedContext,
     campaigns
@@ -888,7 +940,7 @@ export async function POST(request: NextRequest) {
     const { stats, campaigns } = await generateAutomations(supabase, user.id);
     return NextResponse.json({ ok: true, automation: stats, campaigns });
   } catch (error) {
-    console.error("AUTO ACTION ERROR:", error);
+    console.error("AUTO ACTIONS ERROR:", error);
     return NextResponse.json({
       ok: true,
       automation: {
@@ -898,7 +950,8 @@ export async function POST(request: NextRequest) {
         skippedOptOutCount: 0,
         skippedInsertErrorCount: 1,
         skippedDuplicateCount: 0,
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        reason: "Aucun client eligible"
       } satisfies AutomationStats,
       campaigns: []
     });

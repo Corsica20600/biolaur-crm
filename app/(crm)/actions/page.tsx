@@ -24,6 +24,7 @@ type AutomationStats = {
   skippedInsertErrorCount?: number;
   skippedOptOutCount: number;
   generatedAt: string;
+  reason?: string;
 };
 type ActionsPayload = {
   ok: boolean;
@@ -112,7 +113,7 @@ export default function ActionsPage() {
               ) : null}
             </>
           ) : (
-            <>Aucune action generee</>
+            <>0 action generee car {automationStats.reason || "Aucun client eligible"}</>
           )}
         </div>
       ) : null}
