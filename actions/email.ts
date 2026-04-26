@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { revalidatePath } from "next/cache";
 import * as XLSX from "xlsx";
+import { mapCommercialActionType } from "@/lib/commercial-action-type";
 import { createOrderPdf } from "@/lib/pdf/order-pdf";
 import { requireAuthenticatedUser } from "@/lib/server-auth";
 import { createAdminClient } from "@/supabase/admin";
@@ -528,8 +529,9 @@ async function insertCommercialActionDone(
     owner_id: userId,
     prospect_client_id: prospectClientId,
     client_id: legacyClientId ?? null,
-    action_type: "email",
-    type: "email",
+    action_type: mapCommercialActionType("email"),
+    type_action: mapCommercialActionType("email"),
+    type: mapCommercialActionType("email"),
     action_status: "fait",
     statut: "fait",
     action_date: new Date().toISOString(),

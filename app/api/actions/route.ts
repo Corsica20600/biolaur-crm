@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { mapCommercialActionType, type CommercialActionType } from "@/lib/commercial-action-type";
 import { requireAuthenticatedUser } from "@/lib/server-auth";
 import { createAdminClient } from "@/supabase/admin";
 
 type DbRow = Record<string, unknown>;
-type ActionType = "appel" | "email" | "relance" | "visite" | "rendez_vous" | "note" | "reassort" | "prospection";
+type ActionType = CommercialActionType;
 type ActionStatus = "a_faire" | "fait" | "annule";
 
 type AutomationCandidate = {
   key: string;
   prospectClientId: string;
-  actionType: ActionType;
+  actionType: string;
   actionDateIso: string;
   summary: string;
   details: string;
   nextActionDateIso?: string;
-  nextActionType?: ActionType;
+  nextActionType?: string;
 };
 
 type AutomationCampaign = {
@@ -154,11 +155,7 @@ function isOpenAction(row: DbRow) {
 }
 
 function normalizeActionType(row: DbRow): ActionType {
-  const fallback = asString(readField(row, "action_type", "type")).toLowerCase();
-  const legacyType = asString(readField(row, "type")).toLowerCase();
-  if (legacyType === "reassort" || legacyType === "prospection") return legacyType;
-  if (fallback === "visite" || fallback === "relance" || fallback === "email" || fallback === "rendez_vous" || fallback === "note") return fallback;
-  return "appel";
+  return mapCommercialActionType(readField(row, "action_type", "type"), "relance");
 }
 
 function isOptOut(row: DbRow) {
@@ -173,13 +170,8 @@ function getContactEmail(row: DbRow) {
 }
 
 function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCandidate, legacyClientId: string | null) {
-  const isExtendedType = candidate.actionType === "reassort" || candidate.actionType === "prospection";
-  const actionType = isExtendedType ? "relance" : candidate.actionType;
-  const nextActionType = candidate.nextActionType
-    ? candidate.nextActionType === "reassort" || candidate.nextActionType === "prospection"
-      ? "relance"
-      : candidate.nextActionType
-    : null;
+  const actionType = mapCommercialActionType(candidate.actionType, "relance");
+  const nextActionType = candidate.nextActionType ? mapCommercialActionType(candidate.nextActionType, "relance") : null;
 
   return {
     owner_user_id: ownerUserId,
@@ -187,7 +179,8 @@ function buildActionInsertPayload(ownerUserId: string, candidate: AutomationCand
     prospect_client_id: candidate.prospectClientId,
     client_id: legacyClientId,
     action_type: actionType,
-    type: candidate.actionType,
+    type_action: actionType,
+    type: actionType,
     action_status: "a_faire",
     statut: "a_faire",
     action_date: candidate.actionDateIso,
@@ -496,13 +489,13 @@ function buildAutomationCandidates(context: ContextData, now: Date) {
     }
     if (lastOrderDate) {
       const actionDate = addDays(lastOrderDate, 15);
-      maybeCreateCandidate(candidates, openKeys, { key: `order_j15:${prospectClientId}:${lastOrderDate.toISOString().slice(0, 10)}`, prospectClientId, actionType: "reassort", actionDateIso: actionDate.toISOString(), summary: `Suivi commande J+15 - ${name}`, details: "Suivi post-commande et proposition de reassort.", nextActionDateIso: addDays(actionDate, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
+      maybeCreateCandidate(candidates, openKeys, { key: `order_j15:${prospectClientId}:${lastOrderDate.toISOString().slice(0, 10)}`, prospectClientId, actionType: "relance", actionDateIso: actionDate.toISOString(), summary: `Suivi commande J+15 - ${name}`, details: "Suivi post-commande et proposition de reassort.", nextActionDateIso: addDays(actionDate, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
     }
     if (recordType === "client" && Number.isFinite(daysSinceLastOrder) && daysSinceLastOrder >= 45) {
-      maybeCreateCandidate(candidates, openKeys, { key: `client_dormant_45:${prospectClientId}`, prospectClientId, actionType: "reassort", actionDateIso: now.toISOString(), summary: `Relance reassort client dormant - ${name}`, details: "Client sans commande depuis 45 jours.", nextActionDateIso: addDays(now, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
+      maybeCreateCandidate(candidates, openKeys, { key: `client_dormant_45:${prospectClientId}`, prospectClientId, actionType: "relance", actionDateIso: now.toISOString(), summary: `Relance reassort client dormant - ${name}`, details: "Client sans commande depuis 45 jours.", nextActionDateIso: addDays(now, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
     }
     if (recordType === "prospect" && daysSinceLastAction >= 30) {
-      maybeCreateCandidate(candidates, openKeys, { key: `prospect_inactive_30:${prospectClientId}`, prospectClientId, actionType: "prospection", actionDateIso: now.toISOString(), summary: `Relance prospection 30 jours - ${name}`, details: "Prospect sans action recente.", nextActionDateIso: addDays(now, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
+      maybeCreateCandidate(candidates, openKeys, { key: `prospect_inactive_30:${prospectClientId}`, prospectClientId, actionType: "relance", actionDateIso: now.toISOString(), summary: `Relance prospection 30 jours - ${name}`, details: "Prospect sans action recente.", nextActionDateIso: addDays(now, 7).toISOString(), nextActionType: "appel" }, optOut, stats);
     }
   }
 
@@ -532,10 +525,9 @@ function buildEmailSuggestion(action: DbRow, prospect: DbRow | undefined, lastOr
   const recordType = asString(readField(prospect, "record_type", "type"));
   const clientType = asString(readField(prospect, "client_type")) || "CHR";
   const actionType = normalizeActionType(action);
-  const preferredCodes = actionType === "reassort" ? ["send_order", "send_sales_pack"] : actionType === "prospection" ? ["send_sales_pack", "send_account_opening"] : ["send_order", "send_account_opening"];
-  const { templateCode, templateId } = pickTemplate(templates, preferredCodes);
+  const { templateCode, templateId } = pickTemplate(templates, ["send_order", "send_sales_pack", "send_account_opening"]);
   const lastOrderLabel = lastOrderDate ? lastOrderDate.toISOString().slice(0, 10) : "pas de commande recente";
-  const subject = actionType === "reassort" ? `Proposition de reassort - ${name}` : actionType === "prospection" ? `Echange commercial ${clientType} - ${name}` : `Suivi commercial - ${name}`;
+  const subject = actionType === "relance" ? `Suivi commercial ${clientType} - ${name}` : `Suivi commercial - ${name}`;
   const message = [
     "Bonjour,",
     "",

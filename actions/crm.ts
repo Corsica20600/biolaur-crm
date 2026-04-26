@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { mapCommercialActionType, type CommercialActionType } from "@/lib/commercial-action-type";
 import { createClient } from "@/supabase/server";
 
 export type SaveProspectClientState = {
@@ -19,8 +20,9 @@ type CommercialActionInsertPayload = {
   owner_id: string;
   prospect_client_id: string;
   client_id: string | null;
-  action_type: string;
-  type: string;
+  action_type: CommercialActionType;
+  type_action: CommercialActionType;
+  type: CommercialActionType;
   action_status: string;
   statut: string;
   action_date: string;
@@ -299,8 +301,7 @@ export async function createCommercialAction(
 
   const actionDate = clean(formData.get("actionDate"));
   const nextActionDate = clean(formData.get("nextActionDate"));
-  const actionType = clean(formData.get("actionType")) || "appel";
-  const normalizedActionType = actionType === "reassort" || actionType === "prospection" ? "relance" : actionType;
+  const normalizedActionType = mapCommercialActionType(clean(formData.get("actionType")), "relance");
   const actionStatus = clean(formData.get("actionStatus")) || "a_faire";
   const legacyClientId = await resolveLegacyClientId(supabase, user.id, prospectClientId);
 
@@ -310,7 +311,8 @@ export async function createCommercialAction(
     prospect_client_id: prospectClientId,
     client_id: legacyClientId,
     action_type: normalizedActionType,
-    type: actionType,
+    type_action: normalizedActionType,
+    type: normalizedActionType,
     action_status: actionStatus,
     statut: actionStatus,
     action_date: actionDate || new Date().toISOString(),
