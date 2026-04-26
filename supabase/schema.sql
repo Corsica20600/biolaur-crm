@@ -719,8 +719,8 @@ create policy "authenticated delete crm storage" on storage.objects
 
 insert into public.email_templates (code, name, subject_template, body_template, is_active)
 values
-  ('send_technical_sheet', 'Envoi fiches techniques', 'Vos fiches techniques produit', 'Bonjour,\n\nVeuillez trouver ci-joint les fiches techniques demandées.\n\nCordialement', true),
-  ('send_order', 'Envoi bon de commande', 'Bon de commande', 'Bonjour,\n\nVeuillez trouver ci-joint votre bon de commande.\n\nCordialement', true),
+  ('send_technical_sheet', 'Envoi fiches techniques', 'Vos fiches techniques produit', 'Bonjour,\n\nSuite à notre échange, vous trouverez en pièces jointes les documents demandés.\n\nJe reste à votre disposition pour toute information complémentaire, un devis personnalisé ou un accompagnement sur vos besoins.\n\nCordialement,\nErwan Longin\nBiolaur Distribution', true),
+  ('send_order', 'Envoi bon de commande', 'Bon de commande', 'Bonjour,\n\nVeuillez trouver ci-joint votre bon de commande.\n\nJe reste à votre disposition pour toute précision ou modification éventuelle.\n\nCordialement,\nErwan Longin\nBiolaur Distribution', true),
   ('send_account_opening', 'Ouverture de compte', 'Documents ouverture de compte', 'Bonjour,\n\nVeuillez trouver ci-joint les documents nécessaires à l’ouverture de compte.\n\nCordialement', true),
   ('send_sales_pack', 'Pack commercial', 'Documentation commerciale', 'Bonjour,\n\nVeuillez trouver ci-joint la documentation commerciale demandée.\n\nCordialement', true)
 on conflict (code) do update set

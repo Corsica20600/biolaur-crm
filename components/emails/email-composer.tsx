@@ -61,6 +61,10 @@ const staticAttachmentOptions: StaticAttachmentOption[] = [
   { key: "pricing_sheet", label: "Tarif BIOLAUR SP 2026 - V2 CORSE" }
 ];
 
+function normalizeEmailBody(body: string) {
+  return body.replace(/\\n/g, "\n");
+}
+
 export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?: string; orderId?: string }) {
   const [data, setData] = useState<EmailComposerData>(emptyData);
   const [loading, setLoading] = useState(true);
@@ -89,7 +93,10 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
       }
 
       setData({
-        templates: payload.templates,
+        templates: payload.templates.map((template) => ({
+          ...template,
+          bodyTemplate: normalizeEmailBody(template.bodyTemplate)
+        })),
         recipients: payload.recipients,
         orders: payload.orders,
         productDocuments: payload.productDocuments
@@ -123,7 +130,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
     if (!selectedTemplate) return;
     setSelectedTemplateId((current) => current || selectedTemplate.id);
     setSubject(selectedTemplate.subjectTemplate);
-    setBody(selectedTemplate.bodyTemplate);
+    setBody(normalizeEmailBody(selectedTemplate.bodyTemplate));
   }, [selectedTemplate]);
 
   useEffect(() => {
@@ -144,7 +151,7 @@ export function EmailComposer({ prospectClientId, orderId }: { prospectClientId?
     setSelectedTemplateId(templateId);
     if (template) {
       setSubject(template.subjectTemplate);
-      setBody(template.bodyTemplate);
+      setBody(normalizeEmailBody(template.bodyTemplate));
     }
   }
 
